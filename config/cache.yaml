@@ -1,0 +1,37 @@
+# Cache Configuration
+# =================
+# Global cache settings
+capacity: 1000            # Maximum number of entries (increased from 100)
+default_ttl: 3600         # Entry TTL in seconds (1 hour, increased from 5min)
+
+# Cache Management Policies
+# ========================
+# eviction:      Cache eviction policy when full
+#   - LRU:       Least Recently Used (prioritize keeping recently accessed items)
+#   - LFU:       Least Frequently Used (prioritize keeping frequently accessed items)
+#   - SIZE_AWARE: Consider both size and access pattern
+#
+# ttl_policy:    How TTL is handled
+#   - Fixed:     Use default_ttl for all entries
+#   - Dynamic:   Adjust TTL based on access patterns
+#
+# consistency:   Cache consistency mechanism
+#   - NoInvalidate:      No invalidation (stale data possible)
+#   - VersionTag:        Use version tags for validation
+#   - BroadcastInvalidate: Broadcast invalidation messages
+#
+# discovery:     How caches discover entries in the network
+#   - LocalOnly:         Only check local cache
+#   - RegionRSU:         Query RSUs in the same region
+#   - FloodLimited:      Flood queries with TTL
+
+policy:
+  eviction: LFU           # Using LFU to prioritize frequently accessed tasks
+  ttl_policy: Fixed       # Using fixed TTL for simplicity
+  consistency: VersionTag # Version-based consistency for distributed caching
+  discovery: RegionRSU    # Look up caches in the same region
+
+# Monitoring & Logging
+# ===================
+log_level: INFO           # DEBUG | INFO | WARNING | ERROR
+metrics_interval: 60      # How often to log cache metrics (seconds)

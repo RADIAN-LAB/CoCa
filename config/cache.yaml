@@ -1,7 +1,7 @@
 # Cache Configuration
 # =================
 # Global cache settings
-capacity: 1000            # Maximum number of entries (increased from 100)
+capacity: 100             # Maximum number of entries (reduced by 30% from 1000)
 default_ttl: 3600         # Entry TTL in seconds (1 hour, increased from 5min)
 
 # Cache Management Policies

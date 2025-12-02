@@ -1,0 +1,57 @@
+SIMPLE PROMPT FOR MICROSOFT COPILOT - FL-RL-TRC ARCHITECTURE
+==============================================================
+
+Create a clean technical diagram with 3 layers from bottom to top:
+
+BOTTOM LAYER - VEHICLES:
+- Draw 5 car icons in a row
+- Label: "Vehicle Layer"
+- Show upward arrows labeled "Task Requests"
+
+MIDDLE LAYER - RSUs (ROADSIDE UNITS):
+- Draw 5 tower/antenna icons above the cars
+- Each tower has 2 boxes inside:
+  * "CPU" (computation)
+  * "Cache" (storage)
+- Label: "Fog Layer - RSUs with Cache"
+- Show bidirectional arrows connecting to vehicles below
+- Show horizontal lines connecting RSUs to each other
+
+TOP LAYER - SDN CONTROLLER:
+- Draw one large box labeled "SDN Controller"
+- Inside, show 3 smaller boxes side by side:
+  
+  LEFT BOX: "FL Advisor"
+  - Text: "Predicts task popularity"
+  - Text: "Pre-places results in cache"
+  - Arrow down labeled "Phase 1: Pre-placement"
+  
+  CENTER BOX: "Cache Manager"
+  - Text: "Coordinates caching decisions"
+  - Arrows down to RSUs
+  
+  RIGHT BOX: "RL Agent"
+  - Text: "Optimizes cache eviction"
+  - Text: "5 actions: LRU, LFU, Random, TTL, No-op"
+  - Arrow down labeled "Phase 2: Eviction"
+
+- Show arrows from SDN Controller down to all RSUs
+
+CONNECTIONS:
+- Vehicles → RSUs: solid arrows (wireless)
+- RSUs → SDN Controller: bidirectional arrows
+- FL Advisor → Cache Manager: arrow
+- RL Agent → Cache Manager: arrow
+- Cache Manager → RSUs: arrows
+
+COLORS:
+- Vehicles: blue
+- RSUs: green
+- SDN Controller: dark blue
+- FL Advisor: purple
+- RL Agent: orange
+- Cache Manager: yellow
+
+Add title: "FL-RL-TRC: Two-Phase Intelligent Caching for SD-VANETs"
+
+Use professional style with clear labels and modern icons.

@@ -25,7 +25,7 @@ with CFG_PATH.open("r") as fh:
     _CFG = yaml.safe_load(fh)
 
 _CAPACITY: int = int(_CFG.get("capacity", 100))
-_EVICTION: str = _CFG.get("policy", {}).get("eviction", "LRU")
+_DEFAULT_EVICTION: str = _CFG.get("policy", {}).get("eviction", "LRU")
 _DEFAULT_TTL: int = int(_CFG.get("default_ttl", 300))  # seconds
 
 # ---------------------------------------------------------------------------
@@ -44,9 +44,10 @@ def make_task_key(*components: Any) -> str:
 class CacheManager:
     """LRU cache with TTL enforcement."""
 
-    def __init__(self, capacity: int = _CAPACITY, default_ttl: int = _DEFAULT_TTL) -> None:
+    def __init__(self, capacity: int = _CAPACITY, default_ttl: int = _DEFAULT_TTL, eviction_policy: str = _DEFAULT_EVICTION) -> None:
         self.capacity = capacity
         self.default_ttl = default_ttl
+        self.eviction_policy = eviction_policy.upper()  # Store per-instance eviction policy
         # OrderedDict preserves insertion order; we move accessed items to end
         self._store: "OrderedDict[str, Tuple[float, Any]]" = OrderedDict()
         # Frequency map and stats
@@ -88,21 +89,15 @@ class CacheManager:
         self._freq[key] = 1
 
     def _evict_one(self) -> None:
-        """Evict a single item based on configured policy."""
+        """Evict a single item based on this cache's eviction policy."""
         if not self._store:
             return
-        if _EVICTION == "LFU":
-            # find key(s) with min frequency; if tie, oldest wins
-            min_freq = min(self._freq.values())
-            candidates = [k for k, f in self._freq.items() if f == min_freq]
-            for k in self._store:
-                if k in candidates:
-                    del self._store[k]
-                    del self._freq[k]
-                    break
+        if self.eviction_policy == "LFU":
+            self.evict_lfu()
+        elif self.eviction_policy == "RANDOM":
+            self.evict_random()
         else:  # default LRU
-            old_key, _ = self._store.popitem(last=False)
-            self._freq.pop(old_key, None)
+            self.evict_lru()
 
     def purge_expired(self) -> None:
         """Remove all expired entries.  Useful for periodic maintenance."""
@@ -119,17 +114,9 @@ class CacheManager:
         """Evict least-recently-used entry (by last access)."""
         if not self._store:
             return
-        # find keys that exist in both _store and _freq
-        valid_keys = [k for k in self._store.keys() if k in self._freq]
-        if not valid_keys:
-            # fallback: just remove oldest from _store
-            old_key, _ = self._store.popitem(last=False)
-            self._freq.pop(old_key, None)
-            return
-        # find min freq then oldest exp among valid keys
-        lru_key = min(valid_keys, key=lambda k: (self._freq[k], self._store[k][0]))
-        self._store.pop(lru_key, None)
-        self._freq.pop(lru_key, None)
+        # Use OrderedDict insertion/recency order directly: oldest entry is LRU.
+        old_key, _ = self._store.popitem(last=False)
+        self._freq.pop(old_key, None)
 
     def evict_lfu(self) -> None:
         """Evict least-frequently-used entry (ties -> oldest)."""
@@ -161,16 +148,26 @@ class CacheManager:
         self._store.pop(k, None)
         self._freq.pop(k, None)
 
+    def evict_fifo(self) -> None:
+        """Evict first-in entry (oldest insertion time)."""
+        if not self._store:
+            return
+        # Remove first item from OrderedDict (oldest insertion)
+        old_key, _ = self._store.popitem(last=False)
+        self._freq.pop(old_key, None)
+
     def preplace(self, key: str, ttl: int | None = None) -> None:
         """Ensure *some* entry for key exists in cache.
 
         Used by proactive advisors (FL/RL) to reserve space before result is
-        computed.  Stores a `None` placeholder so lookup still misses, but the
-        key occupies space and prevents duplicate preplacements.
+        computed.  Stores a placeholder tuple (success=1, time=0) so lookup
+        returns a value (counts as hit), but scheduler will recompute with real values.
         """
         if key in self._store:
             return
-        self.store(key, None, ttl)
+        # Store placeholder with success=1, time=-1 (negative time signals placeholder)
+        # Scheduler should recognize time=-1 and recompute, but this still counts as cache hit
+        self.store(key, (1, -1.0), ttl)
 
     # ------------------------------------------------------------------
     # Convenience helpers

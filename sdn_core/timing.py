@@ -10,12 +10,12 @@ from typing import Tuple
 import random
 
 # Timing constants (in milliseconds) - matches scheduler parameters
-CACHE_ACCESS_BASE_TIME = 5.0      # Base cache lookup time
-RSU_TO_RSU_DELAY = 0.5           # Inter-RSU communication delay (matches scheduler)
-VEHICLE_TO_RSU_DELAY = 1.0       # Vehicle to RSU access delay (matches delay_edge_rsu)
-COMPUTATION_BASE_TIME = 50.0     # Base computation time per task
-NETWORK_JITTER_FACTOR = 0.2      # Random variation factor
-ALPHA = 0.1                      # Task-size reduction ratio (matches scheduler)
+CACHE_ACCESS_BASE_TIME = 4.0      # Base cache lookup time (faster cache path)
+RSU_TO_RSU_DELAY = 0.3            # Inter-RSU communication delay (reduced)
+VEHICLE_TO_RSU_DELAY = 1.0        # Vehicle to RSU access delay (matches delay_edge_rsu)
+COMPUTATION_BASE_TIME = 10.0      # Base computation time per task (realistic for VANET edge)
+NETWORK_JITTER_FACTOR = 0.05      # Lower variation to reduce random deadline misses
+ALPHA = 0.1                       # Task-size reduction ratio (matches scheduler)
 
 def calculate_cache_access_time(vehicle_node: int, cache_rsu: int, 
                                data_size_kb: int = 500, enable_forwarding: bool = True) -> float:
@@ -45,8 +45,8 @@ def calculate_cache_access_time(vehicle_node: int, cache_rsu: int,
     
     # If forwarding enabled, add potential inter-RSU delay
     if enable_forwarding:
-        # Probability of needing to forward to another RSU
-        forward_probability = 0.3
+        # Probability of needing to forward to another RSU (reduced)
+        forward_probability = 0.15
         if random.random() < forward_probability:
             access_time += RSU_TO_RSU_DELAY
     

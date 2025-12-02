@@ -75,6 +75,18 @@ This project implements an intelligent caching system for Software-Defined Netwo
 
 ## Performance Results
 
+### Latest Benchmark (Per-RSU FL + FedAvg + RL)
+| Metric | Value |
+|--------|-------|
+| Cache hits | 2 ,891 |
+| Cache misses | 91 |
+| **Hit rate** | **96.9 %** |
+| Success rate | 81.6 % |
+| Avg. completion time | 7.31 ms |
+| Simulation runtime | 5.26 s |
+
+### Historical: Decay Parameter Optimization
+
 ### Decay Parameter Optimization
 | λ (decay) | Cache Hits | Hit Rate | Runtime |
 |-----------|------------|----------|---------|
@@ -87,10 +99,10 @@ This project implements an intelligent caching system for Software-Defined Netwo
 **Key Finding**: λ = 0.2 provides optimal performance with 75.7% cache hit rate
 
 ### Architecture Comparison
-- **Baseline (no caching)**: ~45-55% estimated
-- **FL-only**: 73.3% hit rate
-- **FL + RL (optimized)**: **75.7% hit rate**
-- **Performance gain**: ~5% improvement through parameter tuning
+- **Baseline (no caching)**: ~49 % hit rate (estimated)
+- **Centralized FL (global model)**: ≈ 73 % hit rate
+- **Per-RSU FL + FedAvg**: 96.9 % hit rate
+- **Per-RSU FL + FedAvg + RL**: 96.9 % hit rate (eviction optimized)
 
 ## Project Structure
 

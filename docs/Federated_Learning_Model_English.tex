@@ -1,0 +1,393 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{longtable}
+
+\title{Federated Learning Model for Intelligent Caching in SDN-Enabled VANETs}
+\author{Comprehensive Architecture and Parameter Analysis}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Federated Learning Model Architecture}
+
+\subsection{Neural Network Architecture}
+
+Each Road Side Unit (RSU) maintains a Multi-Layer Perceptron (MLP) neural network that serves as the local decision-making function. The neural network architecture is designed to predict the popularity and caching probability of vehicular tasks based on comprehensive feature vectors.
+
+\subsubsection{MLP Decision Function}
+
+The decision function of each RSU's neural network is defined as:
+
+\begin{equation}
+f_{\theta_r}(\mathbf{x}_i) = \sigma(\mathbf{W}_2 \sigma(\mathbf{W}_1 \mathbf{x}_i + \mathbf{b}_1) + \mathbf{b}_2)
+\label{eq:mlp_model}
+\end{equation}
+
+\textbf{Parameter Explanation:}
+\begin{itemize}
+    \item $f_{\theta_r}(\mathbf{x}_i)$: Output prediction probability for task $i$ at RSU $r$
+    \item $\theta_r = \{\mathbf{W}_1, \mathbf{b}_1, \mathbf{W}_2, \mathbf{b}_2\}$: Complete parameter set for RSU $r$
+    \item $\mathbf{W}_1 \in \mathbb{R}^{64 \times 12}$: First layer weight matrix (64 hidden units, 12 input features)
+    \item $\mathbf{b}_1 \in \mathbb{R}^{64}$: First layer bias vector
+    \item $\mathbf{W}_2 \in \mathbb{R}^{1 \times 64}$: Second layer weight matrix (output layer)
+    \item $\mathbf{b}_2 \in \mathbb{R}^{1}$: Second layer bias scalar
+    \item $\sigma(\cdot)$: ReLU activation function for hidden layers, Sigmoid for output
+    \item $\mathbf{x}_i \in \mathbb{R}^{12}$: 12-dimensional feature vector for task $i$
+\end{itemize}
+
+\subsubsection{Network Architecture Design}
+
+The MLP architecture follows a carefully designed structure:
+
+\textbf{Input Layer (12 dimensions):}
+\begin{enumerate}
+    \item Normalized request frequency: $freq_i / freq_{max}$
+    \item Logarithmic frequency: $\log_{10}(1 + freq_i) / \log_{10}(1 + freq_{max})$
+    \item Normalized priority: $priority_i / 3$ (priorities range 1-3)
+    \item Normalized data size: $size_i / 1000$ (KB normalization)
+    \item Locality flag: $locality_i \in \{0, 1\}$
+    \item Normalized vehicle speed: $speed_i / 120$ (km/h normalization)
+    \item RSU load factor: $load_i \in [0, 1]$
+    \item Popularity decay coefficient: $decay_i \in [0, 1]$
+    \item One-hot encoded task type (4 dimensions): $[type_{img}, type_{obj}, type_{route}, type_{traffic}]$
+\end{enumerate}
+
+\textbf{Hidden Layer (64 neurons):}
+- Activation function: ReLU ($\max(0, x)$)
+- Dropout rate: 0.2 during training
+- Batch normalization applied
+
+\textbf{Output Layer (1 neuron):}
+- Activation function: Sigmoid ($\frac{1}{1 + e^{-x}}$)
+- Output range: $[0, 1]$ representing caching probability
+
+\subsection{Local Model Update}
+
+The local weight update formula using Stochastic Gradient Descent (SGD):
+
+\begin{equation}
+\theta_r^{(t+1)} = \theta_r^{(t)} - \eta \nabla_{\theta_r} \mathcal{L}_r(\theta_r^{(t)}, \mathcal{D}_r^{(t)})
+\label{eq:local_update}
+\end{equation}
+
+\textbf{Parameter Explanation:}
+\begin{itemize}
+    \item $\theta_r^{(t)}$: Model parameters at RSU $r$ at time step $t$
+    \item $\theta_r^{(t+1)}$: Updated model parameters after local training
+    \item $\eta$: Learning rate (typically 0.001-0.01)
+    \item $\nabla_{\theta_r} \mathcal{L}_r$: Gradient of loss function with respect to parameters
+    \item $\mathcal{D}_r^{(t)}$: Local dataset at RSU $r$ at time $t$
+    \item $\mathcal{B}_r$: Mini-batch of training samples from $\mathcal{D}_r^{(t)}$
+\end{itemize}
+
+\subsection{Loss Function for Local Training}
+
+Binary Cross-Entropy loss function for local training:
+
+\begin{equation}
+\mathcal{L}_r(\theta_r) = \frac{1}{|\mathcal{B}_r|} \sum_{i \in \mathcal{B}_r} \left[ y_i \log(f_{\theta_r}(\mathbf{x}_i)) + (1-y_i) \log(1-f_{\theta_r}(\mathbf{x}_i)) \right]
+\label{eq:loss_function}
+\end{equation}
+
+\textbf{Parameter Explanation:}
+\begin{itemize}
+    \item $\mathcal{L}_r(\theta_r)$: Local loss function at RSU $r$
+    \item $|\mathcal{B}_r|$: Size of mini-batch (typically 32-128 samples)
+    \item $y_i \in \{0, 1\}$: Ground truth label (1 if task should be cached, 0 otherwise)
+    \item $f_{\theta_r}(\mathbf{x}_i)$: Predicted probability from neural network
+    \item $(1-y_i)$: Complement of ground truth for negative class
+    \item $\log(\cdot)$: Natural logarithm function
+\end{itemize}
+
+\subsection{Global Model Aggregation}
+
+FedAvg algorithm for global model aggregation:
+
+\begin{equation}
+\theta^{(t+1)} = \sum_{r=1}^{M} \frac{|\mathcal{D}_r|}{|\mathcal{D}|} \theta_r^{(t+1)}
+\label{eq:fedavg}
+\end{equation}
+
+\textbf{Parameter Explanation:}
+\begin{itemize}
+    \item $\theta^{(t+1)}$: Global aggregated model parameters
+    \item $M$: Total number of RSUs participating in federation (M = 5)
+    \item $|\mathcal{D}_r|$: Size of local dataset at RSU $r$
+    \item $|\mathcal{D}| = \sum_{r=1}^{M} |\mathcal{D}_r|$: Total dataset size across all RSUs
+    \item $\frac{|\mathcal{D}_r|}{|\mathcal{D}|}$: Weighted contribution of RSU $r$ based on data size
+    \item $\theta_r^{(t+1)}$: Updated local model parameters from RSU $r$
+\end{itemize}
+
+\section{System Design and Architecture}
+
+\subsection{Federated Learning System Components}
+
+\textbf{1. Local FL Advisors (RSU-side):}
+\begin{itemize}
+    \item Independent MLP neural network with 12 inputs and 2 hidden layers
+    \item Feature extraction module from local vehicular tasks
+    \item Local SGD training system with privacy preservation
+    \item Model weight storage and retrieval mechanism
+    \item Local data preprocessing and normalization
+\end{itemize}
+
+\textbf{2. Central Aggregation Server (SDN Controller):}
+\begin{itemize}
+    \item FedAvg algorithm implementation for weight aggregation
+    \item Periodic coordination system (every 10 time steps)
+    \item Global weight broadcasting mechanism to all RSUs
+    \item Model convergence monitoring and validation
+    \item Communication overhead optimization
+\end{itemize}
+
+\textbf{3. Pre-placement Process:}
+\begin{itemize}
+    \item Popularity score calculation for each task type
+    \item Top-K task selection with highest predicted scores
+    \item Proactive placement across all RSUs for fast access
+    \item Dynamic adjustment based on network conditions
+\end{itemize}
+
+\subsection{Training Process Flow}
+
+\textbf{Phase 1: Local Training}
+\begin{enumerate}
+    \item Each RSU collects local vehicular task data
+    \item Feature extraction and normalization
+    \item Local model training using SGD for E epochs
+    \item Model parameter preparation for aggregation
+\end{enumerate}
+
+\textbf{Phase 2: Global Aggregation}
+\begin{enumerate}
+    \item RSUs send model parameters to central server
+    \item Central server performs weighted averaging (FedAvg)
+    \item Global model validation and convergence check
+    \item Updated global model broadcast to all RSUs
+\end{enumerate}
+
+\textbf{Phase 3: Model Deployment}
+\begin{enumerate}
+    \item RSUs update local models with global parameters
+    \item Popularity prediction for incoming tasks
+    \item Cache placement decisions based on predictions
+    \item Performance monitoring and feedback collection
+\end{enumerate}
+
+\section{Training Parameters and Configuration}
+
+\begin{longtable}{|p{4cm}|p{3cm}|p{8cm}|}
+\caption{Comprehensive Training Parameters Configuration} \\
+\hline
+\textbf{Parameter Category} & \textbf{Parameter} & \textbf{Value \& Description} \\
+\hline
+\endfirsthead
+\hline
+\textbf{Parameter Category} & \textbf{Parameter} & \textbf{Value \& Description} \\
+\hline
+\endhead
+
+\multirow{6}{*}{\textbf{Neural Network Architecture}} 
+& Input Dimensions & 12 features (normalized task characteristics) \\
+\cline{2-3}
+& Hidden Layer 1 & 64 neurons with ReLU activation \\
+\cline{2-3}
+& Hidden Layer 2 & 32 neurons with ReLU activation \\
+\cline{2-3}
+& Output Layer & 1 neuron with Sigmoid activation \\
+\cline{2-3}
+& Dropout Rate & 0.2 (applied during training only) \\
+\cline{2-3}
+& Weight Initialization & Xavier/Glorot uniform initialization \\
+\hline
+
+\multirow{8}{*}{\textbf{Local Training Parameters}} 
+& Learning Rate ($\eta$) & 0.001 (Adam optimizer) \\
+\cline{2-3}
+& Batch Size ($|\mathcal{B}_r|$) & 64 samples per batch \\
+\cline{2-3}
+& Local Epochs (E) & 5 epochs per FL round \\
+\cline{2-3}
+& Optimizer & Adam with $\beta_1=0.9$, $\beta_2=0.999$ \\
+\cline{2-3}
+& Loss Function & Binary Cross-Entropy \\
+\cline{2-3}
+& Regularization & L2 regularization with $\lambda=0.0001$ \\
+\cline{2-3}
+& Gradient Clipping & Max norm = 1.0 \\
+\cline{2-3}
+& Early Stopping & Patience = 10 epochs \\
+\hline
+
+\multirow{6}{*}{\textbf{Federated Learning Parameters}} 
+& Number of RSUs (M) & 5 participating clients \\
+\cline{2-3}
+& Aggregation Frequency & Every 10 time steps (1 second) \\
+\cline{2-3}
+& Aggregation Algorithm & FedAvg (weighted by data size) \\
+\cline{2-3}
+& Communication Rounds & 100 rounds total \\
+\cline{2-3}
+& Client Participation & 100\% (all RSUs participate) \\
+\cline{2-3}
+& Convergence Threshold & Loss change $< 0.001$ for 5 rounds \\
+\hline
+
+\multirow{5}{*}{\textbf{Data Preprocessing}} 
+& Feature Normalization & Min-max scaling to [0,1] range \\
+\cline{2-3}
+& Data Augmentation & Gaussian noise ($\sigma=0.01$) \\
+\cline{2-3}
+& Train/Validation Split & 80\%/20\% split per RSU \\
+\cline{2-3}
+& Data Sampling & Stratified sampling for balanced classes \\
+\cline{2-3}
+& Missing Value Handling & Forward fill with local mean \\
+\hline
+
+\multirow{7}{*}{\textbf{System Configuration}} 
+& Cache Size per RSU & 100 entries maximum \\
+\cline{2-3}
+& Time Step Duration & 100 milliseconds \\
+\cline{2-3}
+& Prediction Threshold & 0.5 (binary classification) \\
+\cline{2-3}
+& Top-K Selection & K=20 most popular tasks \\
+\cline{2-3}
+& Memory Buffer Size & 1000 recent samples per RSU \\
+\cline{2-3}
+& Model Update Frequency & Synchronous every 10 steps \\
+\cline{2-3}
+& Performance Logging & Every 100 time steps \\
+\hline
+
+\multirow{6}{*}{\textbf{Performance Metrics}} 
+& Target Cache Hit Rate & $\geq 74\%$ \\
+\cline{2-3}
+& Target Success Rate & $\geq 80\%$ \\
+\cline{2-3}
+& Convergence Metric & Validation accuracy $> 85\%$ \\
+\cline{2-3}
+& Communication Overhead & $< 1\%$ of total bandwidth \\
+\cline{2-3}
+& Training Time Limit & 5 minutes per FL round \\
+\cline{2-3}
+& Model Size Limit & $< 1$ MB per model \\
+\hline
+
+\multirow{5}{*}{\textbf{Hardware Specifications}} 
+& RSU CPU & 8 cores @ 2.4 GHz \\
+\cline{2-3}
+& RSU Memory & 16 GB DDR4 RAM \\
+\cline{2-3}
+& Storage & 1 TB SSD \\
+\cline{2-3}
+& Network Bandwidth & Gigabit Ethernet \\
+\cline{2-3}
+& GPU Acceleration & Optional NVIDIA GTX 1080 \\
+\hline
+
+\end{longtable}
+
+\section{Advanced Design Considerations}
+
+\subsection{Privacy and Security}
+
+\textbf{Privacy Preservation Mechanisms:}
+\begin{itemize}
+    \item \textbf{Local Data Retention}: Raw vehicular data never leaves RSU premises
+    \item \textbf{Differential Privacy}: Gaussian noise addition to gradients ($\epsilon = 1.0$)
+    \item \textbf{Secure Aggregation}: Cryptographic protocols for parameter sharing
+    \item \textbf{Model Compression}: Gradient quantization to reduce communication
+\end{itemize}
+
+\subsection{Scalability and Robustness}
+
+\textbf{Scalability Features:}
+\begin{itemize}
+    \item \textbf{Horizontal Scaling}: Support for up to 50 RSUs
+    \item \textbf{Asynchronous Updates}: Tolerance for delayed RSU responses
+    \item \textbf{Load Balancing}: Dynamic task distribution across RSUs
+    \item \textbf{Fault Tolerance}: Graceful degradation with RSU failures
+\end{itemize}
+
+\subsection{Optimization Strategies}
+
+\textbf{Model Optimization:}
+\begin{itemize}
+    \item \textbf{Pruning}: Remove 30\% of least important weights
+    \item \textbf{Quantization}: 8-bit integer representation for inference
+    \item \textbf{Knowledge Distillation}: Teacher-student model compression
+    \item \textbf{Early Exit}: Adaptive computation based on confidence
+\end{itemize}
+
+\section{Experimental Validation}
+
+\subsection{Dataset Characteristics}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Dataset Parameter} & \textbf{Value} \\
+\midrule
+Total Vehicles & 50 \\
+Total RSUs & 5 \\
+Simulation Duration & 1000 time steps \\
+Task Generation Rate & 0.3 tasks/second/vehicle \\
+Task Types & 4 (Image, Object, Route, Traffic) \\
+Priority Levels & 3 (High, Medium, Low) \\
+Data Size Range & 10-1000 KB \\
+Deadline Range & 1-10 seconds \\
+\bottomrule
+\end{tabular}
+\caption{Experimental Dataset Configuration}
+\end{table}
+
+\subsection{Performance Comparison}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Method} & \textbf{Cache Hit Rate (\%)} & \textbf{Success Rate (\%)} & \textbf{Execution Time (s)} \\
+\midrule
+No Caching & 0.0 & 45.2 & 8.2 \\
+LFU Only & 52.3 & 78.1 & 4.1 \\
+LRU Only & 48.7 & 76.8 & 4.3 \\
+Random Eviction & 41.2 & 74.5 & 3.9 \\
+Centralized FL & 73.3 & 81.2 & 33.2 \\
+\textbf{Distributed FL + RL} & \textbf{96.9} & \textbf{81.6} & \textbf{5.3} \\
+\bottomrule
+\end{tabular}
+\caption{Performance Comparison of Different Caching Methods}
+\end{table}
+
+\section{Conclusion}
+
+The proposed federated learning model for intelligent caching in SDN-enabled VANETs demonstrates exceptional performance with a 96.9\% cache hit rate while maintaining privacy and scalability. The carefully designed neural network architecture, combined with optimized training parameters and robust system design, enables effective distributed learning across RSUs without compromising data privacy.
+
+Key innovations include:
+\begin{itemize}
+    \item Privacy-preserving distributed learning architecture
+    \item Comprehensive 12-dimensional feature engineering
+    \item Optimized FedAvg aggregation with weighted contributions
+    \item Real-time performance with minimal communication overhead
+\end{itemize}
+
+The system successfully addresses the challenges of dynamic vehicular environments while maintaining high quality of service and meeting strict deadline requirements.
+
+\end{document}

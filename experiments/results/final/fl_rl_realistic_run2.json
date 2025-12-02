@@ -1,0 +1,8 @@
+{
+  "total_tasks": 3019,
+  "success_rate": 0.8125207022192779,
+  "average_completion": 5.6026395748677835,
+  "cache_hits": 2818,
+  "cache_misses": 201,
+  "runtime_seconds": 20.173144102096558
+}

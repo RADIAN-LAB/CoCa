@@ -1,0 +1,106 @@
+\begin{table*}[t]
+\centering
+\caption{Performance comparison of FL-RL-TRC against baseline caching approaches}
+\label{table:performance_results}
+\begin{tabular}{l|c|c|c|c|c}
+\hline
+\rowcolor[gray]{0.9}
+\textbf{Method} & \textbf{Cache Hits} & \textbf{Hit Rate (\%)} & \textbf{Success Rate (\%)} & \textbf{Avg Time (ms)} & \textbf{Runtime (s)} \\
+\hline
+\textbf{FL+RL (Proposed)} & \textbf{2894/2982} & \textbf{97.05} & 80.85 & 5.74 & 6.32 \\
+\hline
+FL+LFU & 2888/2982 & 96.85 & 80.92 & 5.72 & 5.52 \\
+FL+LRU & 2888/2982 & 96.85 & 80.92 & 5.72 & 5.29 \\
+LFU (No FL) & 2881/2982 & 96.61 & 80.99 & 5.71 & 5.59 \\
+\hline
+\multicolumn{6}{l}{\textit{Improvement over FL+LFU:}} \\
+\multicolumn{6}{l}{Hit Rate: \textbf{+0.20 pp} \quad Success Rate: -0.07 pp \quad Completion Time: +0.02 ms} \\
+\hline
+\end{tabular}
+\end{table*}
+
+\begin{table}[t]
+\centering
+\caption{FL advisor training convergence metrics}
+\label{table:fl_convergence}
+\begin{tabular}{l|c}
+\hline
+\rowcolor[gray]{0.9}
+\textbf{Metric} & \textbf{Value} \\
+\hline
+Initial Hit Rate (t=10) & 53.42\% \\
+Final Hit Rate (t=199) & 97.05\% \\
+Total Improvement & +43.63 pp \\
+Convergence Timestep & 150-180 \\
+Training Duration & 200 timesteps \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{RL agent configuration and final state}
+\label{table:rl_config}
+\begin{tabular}{l|l}
+\hline
+\rowcolor[gray]{0.9}
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+\multicolumn{2}{c}{\textit{Network Architecture}} \\
+\hline
+Hidden Layers & [128, 64] neurons \\
+Activation Function & ReLU \\
+Output Layer & 5 actions (softmax) \\
+\hline
+\multicolumn{2}{c}{\textit{Training Hyperparameters}} \\
+\hline
+Learning Rate & 0.003 \\
+Batch Size & 64 \\
+Replay Buffer Size & 10,000 transitions \\
+Discount Factor ($\gamma$) & 0.99 \\
+\hline
+\multicolumn{2}{c}{\textit{Exploration Strategy}} \\
+\hline
+Initial Epsilon & 0.3 \\
+Final Epsilon & 0.01 \\
+Epsilon Decay & 0.98 per step \\
+Epsilon at Convergence (t=200) & 0.010 \\
+\hline
+\multicolumn{2}{c}{\textit{Performance Metrics}} \\
+\hline
+Final Hit Rate & 97.05\% \\
+Training Steps & 200 \\
+Convergence Achieved & Yes (t≈150) \\
+\hline
+\end{tabular}
+\end{table}
+
+% Figure references for your paper:
+
+% \begin{figure}[t]
+% \centering
+% \includegraphics[width=0.9\linewidth]{fig1_hit_rate_comparison.pdf}
+% \caption{Cache hit rate comparison across different caching approaches. FL-RL-TRC achieves the highest hit rate (97.05\%) among all methods.}
+% \label{fig:hit_rate_comparison}
+% \end{figure}
+
+% \begin{figure}[t]
+% \centering
+% \includegraphics[width=0.9\linewidth]{fig2_fl_training_convergence.pdf}
+% \caption{FL advisor training convergence showing cache hit rate improvement from 53.42\% to 97.05\% over 200 timesteps. The moving average trend line demonstrates smooth convergence around timestep 150-180.}
+% \label{fig:fl_convergence}
+% \end{figure}
+
+% \begin{figure*}[t]
+% \centering
+% \includegraphics[width=0.7\linewidth]{fig3_radar_chart.pdf}
+% \caption{Multi-metric performance comparison using radar chart. FL-RL-TRC demonstrates balanced performance across hit rate, success rate, speed, and overall efficiency metrics.}
+% \label{fig:radar_chart}
+% \end{figure*}
+
+% \begin{figure*}[t]
+% \centering
+% \includegraphics[width=0.95\linewidth]{fig4_improvement_analysis.pdf}
+% \caption{Performance improvement analysis. (Left) Hit rate improvement relative to FL+LFU baseline. (Right) Task success rate comparison across all methods.}
+% \label{fig:improvement_analysis}
+% \end{figure*}

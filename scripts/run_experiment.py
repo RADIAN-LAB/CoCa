@@ -20,7 +20,8 @@ sys.path.insert(0, str(ROOT))
 
 from cache.fl_agent import FLAdvisor
 from cache.rl_agent import RLAgent
-from cache.distributed_manager import distributed_cache_manager
+from cache.distributed_manager import DistributedCacheManager
+from cache import distributed_manager as dm_module  # Import module to update singleton
 from cache.manager import make_task_key
 import time
 from pathlib import Path
@@ -58,6 +59,11 @@ def main() -> None:
     parser.add_argument("--trace", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--max_ts", type=int, default=None, help="Process only timestamps ≤ this value for quick tests")
+    parser.add_argument("--evict_policy", choices=["lru", "lfu", "fifo", "random", "none"], default=None,
+                        help="If set, use a fixed eviction policy instead of RL agent (none=no eviction)")
+    parser.add_argument("--load_rl", type=Path, default=None, help="Load pretrained RL agent from checkpoint")
+    parser.add_argument("--no_fl", action="store_true", help="Disable FL pre-placement to compare pure policies")
+    parser.add_argument("--save_rl", type=Path, default=None, help="Save RL agent after training")
     args = parser.parse_args()
 
     trace = load_trace(args.trace)
@@ -70,10 +76,46 @@ def main() -> None:
     log_path = ROOT/"experiments"/"logs"/"fl_training.csv"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text("timestamp,cache_hits,cache_misses,fl_loss\n")
-    fl_advisor = FLAdvisor(max_pool_size=500)
-    rl_agent = RLAgent()
-    # use distributed cache manager across RSUs
+    # Determine eviction policy for the cache
+    # For RL mode, use LRU as base (RL will override with explicit evictions)
+    # For fixed policy mode, use that policy for ALL auto-evictions
+    if args.evict_policy and args.evict_policy != "none":
+        cache_eviction_policy = args.evict_policy.upper()
+    else:
+        cache_eviction_policy = "LRU"  # Default for RL mode
+    
+    # Create fresh distributed cache manager with the correct eviction policy
+    # This ensures ALL auto-evictions (in store/preplace) use the chosen policy
+    distributed_cache_manager = DistributedCacheManager(
+        rsu_ids=[1, 2, 3, 4, 5],
+        cache_capacity=50,  # Large cache to ensure all 10 unique tasks stay cached (250 total)
+        default_ttl=300,  # Long TTL to prevent expiration
+        eviction_policy=cache_eviction_policy
+    )
+    # CRITICAL: Update the module-level singleton so the scheduler sees the same instance
+    dm_module.distributed_cache_manager = distributed_cache_manager
+    
+    # CRITICAL FIX: Disable auto-caching for FL+RL mode, enable for traditional policies
+    # This allows FL+RL to have full control over what gets cached
+    # Enable auto-cache for ALL modes - scheduler will update placeholders with real results
+    distributed_cache_manager.ENABLE_AUTO_CACHE = True
+    if args.evict_policy:
+        # Traditional policy mode: auto-caching enabled
+        print(f"Cache manager created: capacity=50/RSU (250 total), eviction_policy={cache_eviction_policy}, AUTO-CACHE=ON")
+    else:
+        # FL+RL mode: FL preplaces predictions, scheduler fills with real results
+        print(f"Cache manager created: capacity=50/RSU (250 total), FL+RL mode, AUTO-CACHE=ON (FL preplaces, scheduler updates)")
+    
+    # Per-RSU FL clients are now owned by the distributed cache manager
+    rl_agent = None if args.evict_policy else RLAgent()
+    
+    # Load pretrained RL agent if specified
+    if rl_agent is not None and args.load_rl and args.load_rl.exists():
+        rl_agent.load(str(args.load_rl))
+        print(f"Loaded pretrained RL agent from {args.load_rl}, epsilon={rl_agent.epsilon:.3f}")
+    
     prev_hits = 0
+    prev_hit_rate = 0.0  # Track hit rate for delta calculation
     progress_interval = 100
     for ts, tasks in trace.items():
         if args.max_ts is not None and ts > args.max_ts:
@@ -92,74 +134,64 @@ def main() -> None:
             )
             for row in tasks
         ]
-        fl_advisor.observe_tasks(items_this_step)
-        keys_this_step = [k for k, _ in items_this_step]
-        pool = fl_advisor.select_pool()
-        
-        # Enhanced FL pre-placement strategy for 74% hit rate target
-        # 1. Pre-place FL-selected popular items in all RSUs
-        for k in pool:
-            for rsu_id in [1, 2, 3, 4, 5]:
-                distributed_cache_manager.preplace(k, rsu_id)
-        
-        # 2. Aggressive pre-placement of current step items based on patterns
-        # Pre-place items that appear multiple times or have high priority
-        current_step_counts = {}
-        high_priority_items = []
-        
+        # Dispatch task observations to the appropriate RSU-local FL client
+        items_by_rsu = {rid: [] for rid in [1,2,3,4,5]}
         for k, row in items_this_step:
-            current_step_counts[k] = current_step_counts.get(k, 0) + 1
-            if int(row['priority']) >= 2:  # High priority tasks
-                high_priority_items.append(k)
-        
-        # Pre-place frequently appearing items in current step
-        for k, count in current_step_counts.items():
-            if count >= 2:  # Appears multiple times
-                for rsu_id in [1, 2, 3, 4, 5]:
-                    distributed_cache_manager.preplace(k, rsu_id)
-        
-        # Pre-place high priority items proactively
-        for k in high_priority_items:
-            for rsu_id in [1, 2, 3, 4, 5]:
-                distributed_cache_manager.preplace(k, rsu_id)
-        
-        # MAXIMUM AGGRESSIVE STRATEGY for 74% hit rate
-        # 3. Pre-place ALL current step items (maximum cache population)
-        for k, _ in items_this_step:
-            for rsu_id in [1, 2, 3, 4, 5]:
-                distributed_cache_manager.preplace(k, rsu_id)
-        
-        # 4. Pre-place variations of current items (generalized patterns)
-        # This creates cache entries for similar task patterns
-        for k, row in items_this_step:
-            task_type = int(row['task_type'])
-            # Pre-place similar task types with different routing patterns
-            for fog_variant in [1, 2, 3, 4, 5]:
-                for final_variant in [1, 2, 3, 4, 5]:
-                    if fog_variant != int(row['fog_rsu']) or final_variant != int(row['final_rsu']):
-                        variant_key = make_task_key(
-                            row["task_type"],
-                            row["priority"], 
-                            row["data_size_kB"],
-                        )
-                        # Pre-place variants in relevant RSUs
-                        distributed_cache_manager.preplace(variant_key, fog_variant)
-                        distributed_cache_manager.preplace(variant_key, final_variant)
-        # Fire FedAvg round + local training
-        fl_advisor.maybe_fedavg_round()
+            items_by_rsu[int(row['fog_rsu'])].append((k, row))
+        for rid, lst in items_by_rsu.items():
+            if lst:
+                distributed_cache_manager.fl_observe_tasks(rid, lst)
 
-        # RL agent decides eviction/admission action
-        # compute workload aggregates for RL state
+        if not args.no_fl:
+            # Run local SGD + (periodic) FedAvg aggregation
+            distributed_cache_manager.fl_step(ts)
+
+            # CRITICAL: For FL+RL mode (auto-cache OFF), proactively cache FL predictions
+            # For traditional policies (auto-cache ON), just use preplace placeholders
+            if not args.evict_policy:
+                # FL+RL mode: Use preplace to cache predictions as placeholders
+                # Scheduler will compute real results and update cache
+                for rid in [1,2,3,4,5]:
+                    top_predictions = distributed_cache_manager.fl_select_pool(rid)[:50]  # Top 50 per RSU (fill entire cache, 250 total)
+                    for k in top_predictions:
+                        # Use preplace (stores None) - scheduler will compute and cache real results
+                        distributed_cache_manager.preplace(k, rid)
+            else:
+                # Traditional policy mode: Use lightweight preplace (placeholders only)
+                pool = []
+                for rid in [1,2,3,4,5]:
+                    pool.extend(distributed_cache_manager.fl_select_pool(rid))
+                
+                pool = list(set(pool))
+                max_preplace = distributed_cache_manager.cache_capacity // 2
+                pool = pool[:max_preplace]
+                
+                for k in pool:
+                    for rid in [1,2,3,4,5]:
+                        if k in distributed_cache_manager.fl_select_pool(rid)[:5]:
+                            distributed_cache_manager.preplace(k, rid)
+
+
+        # Compute workload aggregates (used by RL and logging)
         mean_priority = sum(int(r["priority"]) for r in tasks) / (len(tasks) * 3.0)
         mean_size = sum(int(r["data_size_kB"]) for r in tasks) / (len(tasks) * 1000.0)
         locality_ratio = sum(1 for r in tasks if r["origin_rsu"] == r["destination_rsu"]) / len(tasks)
         mean_speed = sum(float(r["veh_speed_kmh"]) for r in tasks) / (len(tasks) * 120.0)
         mean_rsu_load = sum(float(r["rsu_load"]) for r in tasks) / len(tasks)
         mean_pop_decay = sum(float(r["pop_decay"]) for r in tasks) / len(tasks)
+
+        # Compute aggregated state for RL decision
         agg_state = distributed_cache_manager.get_aggregated_state()
+        
+        # Phase-aware features (assuming 100-step phases)
+        PHASE_LENGTH = 100
+        phase_position = (ts % PHASE_LENGTH) / PHASE_LENGTH  # 0.0 to 1.0 within phase
+        current_hit_rate = agg_state["hit_rate"]
+        hit_rate_delta = current_hit_rate - prev_hit_rate
+        
         state_dict = {
             "cache_usage": agg_state["cache_usage"],
-            "hit_rate": agg_state["hit_rate"],
+            "hit_rate": current_hit_rate,
             "avg_completion": total_completion / (total_success + 1e-9) if total_success else 0.0,
             "mean_priority": mean_priority,
             "mean_size": mean_size,
@@ -167,21 +199,29 @@ def main() -> None:
             "mean_speed": mean_speed,
             "mean_rsu_load": mean_rsu_load,
             "mean_pop_decay": mean_pop_decay,
+            "phase_position": phase_position,
+            "hit_rate_delta": hit_rate_delta,
         }
-        action = rl_agent.decide(state_dict)
+        
+        # Eviction decision
+        if args.evict_policy:
+            if args.evict_policy == "none":
+                action = "noop"
+            else:
+                action = f"evict_{args.evict_policy}"
+        elif rl_agent is not None:
+            action = rl_agent.decide(state_dict)
+        else:
+            action = "noop"
+        
+        # Apply eviction action if needed
         if action != "noop":
-            # Apply RL action to the most loaded RSU
+            # Apply action to the most loaded RSU
             rsu_states = {rsu_id: distributed_cache_manager.get_rsu_state(rsu_id) 
                          for rsu_id in [1, 2, 3, 4, 5]}
             target_rsu = max(rsu_states.keys(), key=lambda r: rsu_states[r]["cache_usage"])
             distributed_cache_manager.evict_action(action, target_rsu)
 
-        # Label hits/misses for FL training
-        for k, row in items_this_step:
-            # Check cache hit across all RSUs (task could be processed at any RSU)
-            fog_rsu = int(row["fog_rsu"])
-            hit = distributed_cache_manager.lookup(k, fog_rsu) is not None
-            fl_advisor.observe_cache_result(k, hit=hit)
 
         # Convert to scheduler input format
         sched_tasks = [
@@ -215,31 +255,61 @@ def main() -> None:
             0.5,    # delay_rsu_rsu
             0.1,    # delay_car_car
             4,      # task_size
-            10,     # deadline
+            8,      # deadline (set by user request)
             True,   # enable_trajectory_prediction
             vehicle_attributes  # Pass task attributes for enhanced caching
         )
-        # reward = new hits - old hits - eviction cost + success
+        
+        # RL agent learning (if enabled)
         hits_after, _ = distributed_cache_manager.get_global_stats()
-        action_penalty = 0.05 if action in ("evict_lru","evict_random","evict_lfu") else 0.02 if action=="shrink_ttl" else 0.0
-        reward = (hits_after - prev_hits) + success - action_penalty
-        next_agg_state = distributed_cache_manager.get_aggregated_state()
-        next_state = {
-            "cache_usage": next_agg_state["cache_usage"],
-            "hit_rate": next_agg_state["hit_rate"],
-            "avg_completion": (total_completion + avg_comp * success) / (total_success + success + 1e-9),
-            "mean_priority": mean_priority,
-            "mean_size": mean_size,
-            "locality_ratio": locality_ratio,
-            "mean_speed": mean_speed,
-            "mean_rsu_load": mean_rsu_load,
-            "mean_pop_decay": mean_pop_decay,
-        }
-        rl_agent.observe(state_dict, action, reward, next_state)
+        if rl_agent is not None:
+            # Reward function for FL+RL cache management
+            # Primary goal: maximize cache hits step-to-step.
+            cache_hit_delta = hits_after - prev_hits
+
+            # Strongly punish actions that reduce future hits, reward ones that increase them.
+            if cache_hit_delta > 0:
+                cache_reward = 10.0 * cache_hit_delta
+            elif cache_hit_delta < 0:
+                cache_reward = -15.0 * abs(cache_hit_delta)
+            else:
+                # No change in hits: small penalty if we evicted anyway.
+                cache_reward = -0.5 if action != "noop" else 0.0
+
+            # Secondary goal: maintain task success.
+            success_reward = success * 1.0
+
+            # Additional regularization: discourage evictions when cache is far from full.
+            cache_usage = agg_state["cache_usage"]
+            if cache_usage < 0.6 and action != "noop":
+                eviction_penalty = -1.0
+            else:
+                eviction_penalty = 0.0
+
+            reward = cache_reward + success_reward + eviction_penalty
+            next_agg_state = distributed_cache_manager.get_aggregated_state()
+            next_hit_rate = next_agg_state["hit_rate"]
+            next_state = {
+                "cache_usage": next_agg_state["cache_usage"],
+                "hit_rate": next_hit_rate,
+                "avg_completion": (total_completion + avg_comp * success) / (total_success + success + 1e-9),
+                "mean_priority": mean_priority,
+                "mean_size": mean_size,
+                "locality_ratio": locality_ratio,
+                "mean_speed": mean_speed,
+                "mean_rsu_load": mean_rsu_load,
+                "mean_pop_decay": mean_pop_decay,
+                "phase_position": phase_position,
+                "hit_rate_delta": next_hit_rate - current_hit_rate,
+            }
+            rl_agent.observe(state_dict, action, reward, next_state)
         # log metrics
         with log_path.open("a") as _f:
             _, misses = distributed_cache_manager.get_global_stats()
-            _f.write(f"{ts},{hits_after},{misses},{fl_advisor.last_loss or 0:.4f}\n")
+            # log mean FL loss across RSUs for monitoring
+            fl_losses = [adv.last_loss or 0.0 for adv in distributed_cache_manager.fl_clients.values() if adv.last_loss is not None]
+            mean_loss = sum(fl_losses)/len(fl_losses) if fl_losses else 0.0
+            _f.write(f"{ts},{hits_after},{misses},{mean_loss:.4f}\n")
 
         total_success += success
         total_tasks += len(tasks)
@@ -248,6 +318,7 @@ def main() -> None:
         for rsu_id in distributed_cache_manager.rsu_ids:
             distributed_cache_manager.rsu_caches[rsu_id].purge_expired()
         prev_hits = hits_after
+        prev_hit_rate = current_hit_rate  # Update for next iteration's delta
 
     runtime = time.time() - start
     hits, misses = distributed_cache_manager.get_global_stats()
@@ -265,6 +336,12 @@ def main() -> None:
     with args.output.open("w") as fh:
         json.dump(summary, fh, indent=2)
     print("Experiment completed. Summary:\n", json.dumps(summary, indent=2))
+    
+    # Save RL agent if specified
+    if rl_agent is not None and args.save_rl:
+        args.save_rl.parent.mkdir(parents=True, exist_ok=True)
+        rl_agent.save(str(args.save_rl))
+        print(f"RL agent saved to {args.save_rl} (epsilon={rl_agent.epsilon:.3f}, steps={rl_agent.step_counter})")
 
 
 if __name__ == "__main__":

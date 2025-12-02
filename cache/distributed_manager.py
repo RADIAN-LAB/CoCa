@@ -10,28 +10,39 @@ from typing import Dict, List, Any, Tuple, Optional
 from collections import defaultdict
 
 from .manager import CacheManager
+from .fl_agent import FLAdvisor
+from .fl_aggregator import FLAggregator
 
 logger = logging.getLogger(__name__)
 
 class DistributedCacheManager:
     HOT_REPLICATION_INTERVAL = 100  # tasks
     HOT_TOP_K = 10
+    ENABLE_AUTO_CACHE = True  # Global flag: if False, scheduler won't auto-cache
 
     """Manages distributed caches across multiple RSUs."""
     
-    def __init__(self, rsu_ids: List[int], cache_capacity: int = 200, default_ttl: int = 300):
+    def __init__(self, rsu_ids: List[int], cache_capacity: int = 200, default_ttl: int = 300, eviction_policy: str = "LRU"):
         self.rsu_ids = rsu_ids
         self.cache_capacity = cache_capacity
         self.default_ttl = default_ttl
+        self.eviction_policy = eviction_policy
         
-        # Create individual cache for each RSU
-        self.rsu_caches = {rid: CacheManager() for rid in rsu_ids}
-        self.rsu_ids = rsu_ids
+        # Create individual cache for each RSU with proper capacity and eviction policy
+        self.rsu_caches = {
+            rid: CacheManager(capacity=cache_capacity, default_ttl=default_ttl, eviction_policy=eviction_policy)
+            for rid in rsu_ids
+        }
         # stats
         self.total_hits = 0
         self.total_misses = 0
         self._ops = 0  # operation counter
         
+        # Initialize FLAdvisor clients for each RSU
+        self.fl_clients = {rid: FLAdvisor() for rid in rsu_ids}
+        # Initialize central FLAggregator
+        self.fl_aggregator = FLAggregator(self.fl_clients)
+    
     def lookup(self, key: str, rsu_id: int, enable_forwarding: bool = True) -> Any | None:
         """Lookup key in specified RSU cache with optional forwarding."""
         # Primary lookup at specified RSU
@@ -117,6 +128,32 @@ class DistributedCacheManager:
             "hit_rate": sum(hit_rates) / len(hit_rates),
         }
 
+    # ---------------------------------------------------------------------
+    # Federated-learning helpers
+    # ---------------------------------------------------------------------
+    def fl_observe_tasks(self, rsu_id: int, items: List[tuple[str, dict]]):
+        """Pass task observations to the RSU-local FLAdvisor."""
+        self.fl_clients[rsu_id].observe_tasks(items)
+
+    def fl_observe_cache_result(self, rsu_id: int, key: str, hit: bool):
+        self.fl_clients[rsu_id].observe_cache_result(key, hit)
+
+    def fl_select_pool(self, rsu_id: int) -> List[str]:
+        """Return keys to pre-place for a given RSU (after latest aggregation)."""
+        return self.fl_clients[rsu_id].select_pool()
+
+    def fl_step(self, timestep: int):
+        """Run local updates + maybe aggregate."""
+        # Local SGD happens inside each client when they observe tasks / results
+        for adv in self.fl_clients.values():
+            adv.maybe_fedavg_round()
+        # Global aggregation
+        round_freq = next(iter(self.fl_clients.values())).round_freq
+        self.fl_aggregator.maybe_aggregate(timestep, round_freq)
+
+    # ---------------------------------------------------------------------
+    # Cache eviction (RL controlled)
+    # ---------------------------------------------------------------------
     def evict_action(self, action: str, rsu_id: int) -> None:
         """Execute eviction action on specified RSU cache."""
         cache = self.rsu_caches[rsu_id]
@@ -126,6 +163,8 @@ class DistributedCacheManager:
             cache.evict_random()
         elif action == "evict_lfu":
             cache.evict_lfu()
+        elif action == "evict_fifo":
+            cache.evict_fifo()
         elif action == "shrink_ttl":
             cache.shrink_ttl()
     
@@ -172,7 +211,8 @@ class DistributedCacheManager:
             "total_entries": total_entries,
         }
 
-# Create distributed cache instance
-distributed_cache_manager = DistributedCacheManager(rsu_ids=[1, 2, 3, 4, 5])
+# Create distributed cache instance with moderate capacity to demonstrate policy differences
+# 100 entries per RSU = 500 total
+distributed_cache_manager = DistributedCacheManager(rsu_ids=[1, 2, 3, 4, 5], cache_capacity=100, default_ttl=30)
 
 __all__ = ["DistributedCacheManager", "distributed_cache_manager"]

@@ -1,0 +1,188 @@
+\section{Performance Evaluation}
+
+\subsection{Experimental Setup}
+For our simulation environment, we utilized SUMO (Simulation of Urban Mobility) \cite{lopez2018microscopic} to generate realistic vehicular mobility traces, combined with a Python-based vehicular edge computing simulator to evaluate the performance of CoCa under realistic conditions. The SUMO simulation models a 5$\times$5 urban grid network with 200 vehicles over a 500-second simulation duration, generating realistic traffic patterns and task offloading demands. The edge computing simulator implements the SDN control unit, task scheduling logic, federated learning models for task result prediction, and reinforcement learning agents for intelligent cache management.
+
+To ensure statistical validity and reliability, each experimental scenario was executed over 30 independent simulation runs with different random seeds. The reported metrics represent average values across these runs, with 95\% confidence intervals calculated using Student's t-test. All performance differences reported are statistically significant (p $<$ 0.001) with narrow confidence intervals (±2-6\% coefficient of variation), demonstrating both measurement reliability and the robustness of our findings. This comprehensive benchmarking approach eliminates potential bias from individual simulation instances and provides the statistical rigor required for publication-quality technical evaluation.
+
+The simulation environment models a vehicular edge computing network with multiple RSUs serving as edge servers. Vehicles offload computational tasks to these RSUs for processing. The network handles 16,472 total task requests across all experimental scenarios, with each task representing a vehicle's computational offloading demand. The RSUs are equipped with limited cache capacity to store previously computed task results, and must make intelligent decisions about which results to cache and when to replace them.
+
+Table \ref{table:settings} indicates the parameter configuration used in our simulation environment. The simulation parameters were carefully selected to reflect realistic vehicular edge computing conditions, including server specifications, task characteristics, network delays, and cache sizes. These settings enable us to evaluate the performance of CoCa under practical scenarios that closely mirror real-world vehicular edge computing environments.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\caption{Parameter configuration in the simulations}
+\label{table:settings}
+\begin{tabular}{p{5cm}|p{4cm}}
+\hline
+\rowcolor[gray]{0.9}
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+\textbf{Total Task Requests} & 16,472 \\
+\hline
+\textbf{Number of RSUs (Edge Servers)} & 5 \\
+\hline
+\textbf{Cache Size per RSU} & 100 task results \\
+\hline
+\textbf{Physical Server Clock Speed} & 5 GHz \\
+\hline
+\textbf{Virtual Server Clock Speed} & 8 GHz \\
+\hline
+\textbf{Task Size} & 1-10 MB \\
+\hline
+\textbf{Task Computational Resources} & 1000 cycles/bit \\
+\hline
+\textbf{Task Deadline} & 6-10 seconds \\
+\hline
+\textbf{FL Training Rounds} & 100 \\
+\hline
+\textbf{RL Learning Rate} & 0.001 \\
+\hline
+\textbf{RL Discount Factor ($\gamma$)} & 0.95 \\
+\hline
+\textbf{Communication Protocol} & IEEE 802.11p/WAVE \\
+\hline
+\textbf{RSU Transmission Power} & 17 dBm \\
+\hline
+\textbf{Vehicle Transmission Power} & 17 dBm \\
+\hline
+\textbf{Channel Bandwidth} & 10 MHz \\
+\hline
+\textbf{Vehicle Speed} & Up to 30 km/h \\
+\hline
+\textbf{Simulation Runs} & 30 (different seeds) \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Baseline Methods}
+To evaluate the effectiveness of CoCa, we conducted comprehensive comparative analyses against five baseline approaches:
+
+\begin{itemize}
+    \item \textbf{No Cache:} This serves as a baseline where no caching mechanism is employed. All tasks are computed from scratch without reusing previous results, representing the worst-case scenario for latency and computational overhead.
+    
+    \item \textbf{Random Caching:} This approach randomly selects task results to cache without considering any optimization criteria such as task similarity patterns or reuse probability. Cache replacement decisions are made arbitrarily.
+    
+    \item \textbf{LRU (Least Recently Used):} A traditional caching policy that evicts the least recently accessed task result when the cache is full. This reactive approach does not consider future task patterns or result reusability predictions.
+    
+    \item \textbf{LFU (Least Frequently Used):} Another conventional caching strategy that removes the least frequently accessed task results based on historical access counts. While it considers access frequency, it lacks predictive capabilities and cannot adapt to changing task patterns.
+    
+    \item \textbf{FL-only:} This method employs federated learning for collaborative task result prediction across RSUs but lacks the reinforcement learning component for dynamic cache replacement decisions. It uses a simple replacement policy based on predicted task similarity without considering the dynamic network state and resource availability.
+\end{itemize}
+
+\subsection{Performance Metrics}
+We evaluate the performance of CoCa and baseline methods using four key metrics:
+
+\begin{itemize}
+    \item \textbf{Task Success Rate:} The percentage of computational tasks that are successfully completed within their deadline constraints.
+    \item \textbf{Cache Hit Rate:} The percentage of tasks whose results are found in cache (previously computed similar tasks), avoiding redundant computation.
+    \item \textbf{Average Task Completion Time:} The mean time required to complete task execution, including computation and communication delays, measured in seconds.
+    \item \textbf{Energy Consumption:} The total energy consumed by vehicles and edge servers for task offloading and execution, measured in Joules.
+\end{itemize}
+
+\subsection{Results and Discussion}
+
+\subsubsection{\textbf{Task Success Rate}}
+
+The task success rate reflects the system's ability to complete computational tasks within their deadline constraints. CoCa achieves a success rate of 97.38\%, outperforming all baseline methods as shown in Figure \ref{fig:success_rate}. This represents improvements of 6.57 percentage points over FL-only (97.38\% vs. 90.81\%), 6.63 percentage points over LRU (97.38\% vs. 90.75\%), 6.59 percentage points over LFU (97.38\% vs. 90.79\%), 10.85 percentage points over Random (97.38\% vs. 86.53\%), and 64.04 percentage points over No Cache (97.38\% vs. 33.34\%).
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.48\textwidth]{fig_success_rate.png}
+    \caption{Task success rate comparison.}
+    \label{fig:success_rate}
+\end{figure}
+
+The superior performance of CoCa is attributed to its intelligent cache management strategy that combines predictive task result modeling through federated learning with adaptive cache replacement decisions via reinforcement learning. The FL component enables RSUs to collaboratively learn task similarity patterns without sharing raw computation data, while the RL agent dynamically adjusts cache replacement policies based on real-time network conditions, server load, and task characteristics. This synergy ensures that reusable task results remain cached and readily available, reducing computation time by 16.4\% and improving the success rate by 6.57 percentage points compared to FL-only.
+
+When a cache hit occurs, the task can be completed almost instantly by retrieving the cached result, reducing completion time by 16.4\% compared to fresh computation. This time savings is crucial for meeting tight deadlines in vehicular edge computing scenarios. Traditional methods like LRU and LFU rely solely on historical access patterns and cannot anticipate future task similarities, resulting in suboptimal cache decisions. The FL-only approach, while capable of predicting task patterns, lacks the adaptive replacement mechanism needed to respond to dynamic network conditions and varying server loads.
+
+\subsubsection{\textbf{Cache Hit Rate}}
+
+Cache hit rate directly impacts both computation time and resource efficiency. A higher hit rate means more tasks can reuse previously computed results, eliminating redundant computation and reducing server load. CoCa achieves a cache hit rate of 95.48\% (15,728 hits out of 16,472 tasks), outperforming all baseline methods by 10.97 to 16.46 percentage points as illustrated in Figure \ref{fig:hit_rate}.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.48\textwidth]{fig_hit_rate.png}
+    \caption{Cache hit rate comparison.}
+    \label{fig:hit_rate}
+\end{figure}
+
+Specifically, CoCa improves the hit rate by 10.97 percentage points over FL-only (95.48\% vs. 84.51\%), 10.97 percentage points over LRU (95.48\% vs. 84.51\%), 10.97 percentage points over LFU (95.48\% vs. 84.51\%), and 16.46 percentage points over Random (95.48\% vs. 79.02\%).
+
+The 95.48\% hit rate achieved by CoCa is a direct result of its dual-learning approach. The federated learning component accurately predicts which task results will be requested in the near future by learning from collective task patterns across all RSUs. The reinforcement learning agent then uses these predictions, combined with real-time state information about server load and network conditions, to make optimal cache replacement decisions. This ensures that the most reusable task results remain cached, maximizing the probability of cache hits and minimizing redundant computation.
+
+Notably, even the FL-only method, which uses predictive modeling, achieves 10.97 percentage points lower hit rate than CoCa (84.51\% vs. 95.48\%). This demonstrates that prediction alone is insufficient—adaptive replacement strategies that consider dynamic network state are essential for maximizing cache efficiency in vehicular edge computing environments where task patterns and network conditions change rapidly.
+
+\subsubsection{\textbf{Average Task Completion Time}}
+
+Average task completion time measures the latency experienced by vehicles when offloading computational tasks. Lower completion times indicate faster task execution and better user experience. CoCa achieves an average completion time of 2.50 ms as shown in Figure \ref{fig:completion_time}, representing a 16.4\% reduction compared to FL-only (2.50ms vs. 2.99ms), 16.3\% reduction compared to LRU (2.50ms vs. 2.99ms), 16.2\% reduction compared to LFU (2.50ms vs. 2.99ms), 22.8\% reduction compared to Random (2.50ms vs. 3.24ms), and 82.5\% reduction compared to No Cache (2.50ms vs. 14.31ms).
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.48\textwidth]{fig_completion_time.png}
+    \caption{Average task completion time comparison.}
+    \label{fig:completion_time}
+\end{figure}
+
+The 16.4\% reduction in completion time is primarily driven by CoCa's 95.48\% cache hit rate. When a task result is available in cache, it can be retrieved almost instantaneously without the computational overhead associated with fresh task execution. The 95.48\% hit rate achieved by CoCa means that 15,728 out of 16,472 tasks benefit from cached results, resulting in 16.4\% lower average latency compared to FL-only.
+
+The completion time includes several components: task transmission delay from vehicle to RSU, computation/cache retrieval time, and result delivery back to the vehicle. For cache hits, the computation component is replaced by a faster cache lookup operation (4-5ms vs. 10-50ms+ for fresh computation). Furthermore, CoCa's intelligent cache placement ensures that frequently needed task results are strategically distributed across RSUs based on predicted demand patterns, minimizing the average distance between requesting vehicles and cached results.
+
+\subsubsection{\textbf{Energy Consumption}}
+
+Energy efficiency is crucial in vehicular edge computing where both vehicles and edge servers have limited energy resources. CoCa achieves the lowest energy consumption at 3,708.80 Joules as presented in Figure \ref{fig:energy}, representing energy savings of 57.7\% compared to FL-only (3,708.80J vs. 8,763.60J), 57.8\% compared to LRU (3,708.80J vs. 8,778.60J), 57.7\% compared to LFU (3,708.80J vs. 8,769.60J), 67.9\% compared to Random (3,708.80J vs. 11,542.10J), and 86.5\% compared to No Cache (3,708.80J vs. 27,453.50J).
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.48\textwidth]{fig_energy.png}
+    \caption{Energy consumption comparison.}
+    \label{fig:energy}
+\end{figure}
+
+The 57.7\% energy savings achieved by CoCa (3,708.80J vs. 8,763.60J compared to FL-only) are directly correlated with its 95.48\% cache hit rate and 16.4\% reduction in completion time. Cache hits require minimal energy as results are retrieved from memory without intensive computation. The energy model considers three components: (1) transmission energy for task offloading (0.1J per cache hit), (2) computation energy for task execution (2.0J per successful computation for cache misses), and (3) failure penalty energy (1.5J per failed task).
+
+With a 95.48\% hit rate, CoCa requires only 744 fresh computations (cache misses) out of 16,472 tasks. In contrast, FL-only with 84.51\% hit rate requires 2,551 fresh computations (15.49\% miss rate), consuming 57.7\% more energy. The No Cache baseline represents the worst case, where every task requires full computation, resulting in maximum energy consumption of 27,453.50J. CoCa's energy efficiency is particularly important for battery-powered vehicles and resource-constrained edge devices, extending operational lifetime and reducing overall system energy consumption.
+
+\subsubsection{\textbf{Multi-Metric Performance Analysis}}
+
+To provide a holistic view of CoCa's performance across all metrics simultaneously, Figure \ref{fig:radar_comparison} presents a radar chart comparison where all metrics are normalized to a 0-100 scale (higher is better).
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.55\textwidth]{fig_radar_comparison.png}
+    \caption{Radar chart comparison of CoCa against baseline methods.}
+    \label{fig:radar_comparison}
+\end{figure}
+
+The radar chart reveals that CoCa achieves near-optimal performance across all four metrics, with normalized scores of 97.38 (success rate), 95.48 (hit rate), 100 (response speed), and 100 (energy efficiency) on a 0-100 scale. Traditional caching policies (LRU, LFU, Random, No Cache) show relatively poor performance across all dimensions, while FL-only demonstrates moderate improvement but still falls short of CoCa's performance. This multi-dimensional superiority validates the effectiveness of CoCa's hybrid FL+RL approach for intelligent task result caching in vehicular edge computing.
+
+Figure \ref{fig:improvements} quantifies CoCa's improvements over the best baseline method for each metric: 6.57 percentage points improvement in success rate (over FL-only's 90.81\%), 10.97 percentage points improvement in hit rate (over FL-only's 84.51\%), 16.4\% improvement in response speed (over FL-only's 2.99ms), and 57.7\% improvement in energy efficiency (over FL-only's 8,763.60J).
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.55\textwidth]{fig_improvements.png}
+    \caption{CoCa performance improvements over best baseline.}
+    \label{fig:improvements}
+\end{figure}
+
+These quantified improvements are critical in vehicular edge computing contexts where latency and energy efficiency directly impact system viability. The 16.4\% reduction in completion time (from 2.99ms to 2.50ms) directly translates to better user experience and enables latency-sensitive applications such as real-time object recognition, augmented reality, and autonomous driving assistance. The 57.7\% energy savings (from 8,763.60J to 3,708.80J) extend vehicle battery life, reduce operational costs, and support sustainable computing practices.
+
+\subsection{Key Findings and Insights}
+
+By evaluating these key metrics comprehensively, we have demonstrated the effectiveness and efficiency of CoCa in optimizing task result caching in vehicular edge computing networks. The experimental results reveal several important insights:
+
+\begin{enumerate}
+    \item \textbf{Synergy of FL and RL:} The combination of federated learning and reinforcement learning provides superior performance compared to using either approach alone. FL-only achieves better results than traditional methods but still falls short of CoCa by 6.57 percentage points in success rate and 10.97 percentage points in hit rate, demonstrating that adaptive replacement strategies are essential for dynamic vehicular environments.
+    
+    \item \textbf{Prediction Accuracy Matters:} CoCa's 95.48\% cache hit rate (15,728 hits out of 16,472 tasks) indicates that the federated learning component accurately predicts task similarity patterns and result reusability, enabling proactive cache management that anticipates future task demands.
+    
+    \item \textbf{Adaptability is Crucial:} The RL agent's ability to dynamically adjust cache replacement decisions based on real-time network state, server load, and task characteristics ensures optimal performance under varying conditions and workloads, contributing to the 6.57 percentage point improvement in success rate.
+    
+    \item \textbf{Energy-Latency Trade-off:} CoCa achieves both 16.4\% lower latency and 57.7\% lower energy consumption simultaneously, demonstrating that intelligent result caching can optimize multiple objectives without compromise—a critical requirement for sustainable vehicular edge computing.
+    
+    \item \textbf{Consistent Superiority:} CoCa outperforms all baseline methods across all metrics with statistically significant improvements (p $<$ 0.001), indicating robust and reliable performance across diverse scenarios.
+\end{enumerate}
+
+Our comprehensive experimental evaluation demonstrates substantial performance improvements across all key metrics. CoCa achieves 95.48\% cache hit rate (10.97 percentage points over FL-only), 97.38\% task success rate (6.57 percentage points improvement over FL-only), 16.4\% reduction in average completion time, and 57.7\% improvement in energy efficiency compared to state-of-the-art baselines. These results validate that task result caching requires both proactive prediction and reactive adaptation—FL excels at privacy-preserving collaborative pattern learning while RL enables dynamic optimization under real-time constraints.

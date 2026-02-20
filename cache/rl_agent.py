@@ -45,9 +45,9 @@ class RLAgent:
         self.state_dim = state_dim
         self.gamma = gamma
         self.batch_size = batch_size
-        self.epsilon = 0.9  # High initial exploration
-        self.eps_min = 0.05  # Keep some exploration
-        self.eps_decay = 0.997  # Slow decay for thorough exploration
+        self.epsilon = 0.5  # Moderate initial exploration
+        self.eps_min = 0.02  # Low floor for exploitation
+        self.eps_decay = 0.99  # Faster decay for 499-step SUMO trace
 
         self.q_net = _QNet(state_dim, hidden=256)
         self.target_net = _QNet(state_dim, hidden=256)
@@ -56,10 +56,10 @@ class RLAgent:
 
         self.replay: deque[Tuple[torch.Tensor, int, float, torch.Tensor]] = deque(maxlen=50000)
         self.step_counter = 0
-        self.target_update_freq = 50  # More stable target updates
+        self.target_update_freq = 30  # Frequent target updates for shorter trace
         self.last_loss = 0.0
-        self.learn_every = 4  # Learn every N steps
-        self.num_updates = 2  # Multiple gradient updates per learn step
+        self.learn_every = 2  # Learn every 2 steps for faster convergence
+        self.num_updates = 4  # More gradient updates per learn step
 
     # ------------------------------------------------------------------
     def decide(self, state: Dict[str, Any]) -> str:
@@ -94,7 +94,7 @@ class RLAgent:
 
     # ------------------------------------------------------------------
     def _learn(self):
-        if len(self.replay) < self.batch_size * 2:  # Need more samples before learning
+        if len(self.replay) < self.batch_size:  # Start learning sooner
             return
         batch = random.sample(self.replay, self.batch_size)
         states, actions, rewards, next_states = zip(*batch)

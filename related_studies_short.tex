@@ -1,0 +1,74 @@
+\section{Related Studies}
+
+\noindent Task offloading and result caching in vehicular fog computing have evolved to address computational resource constraints, dynamic mobility, and varying task patterns. Traditional reactive policies process tasks independently without reusing results, leading to redundant computation and increased latency \cite{zhang2018caching}.
+
+Early machine learning approaches employed centralized deep learning for task pattern prediction \cite{chen2019deep}, but suffered from privacy concerns and lacked dynamic caching mechanisms. Federated learning addressed privacy through collaborative prediction without data sharing \cite{liu2020federated,lim2020federated}, yet focused solely on prediction without adaptive caching strategies. Reinforcement learning approaches optimized caching decisions through learned policies \cite{sadeghi2019deep,wang2020reinforcement,li2024adaptive}, but operated independently without collaborative learning or predictive capabilities.
+
+Software-Defined Networking enabled centralized task orchestration \cite{xu2018software,zhang2019sdn,zhao2024distributed}, improving coordination but introducing scalability challenges and lacking intelligent caching mechanisms. Hybrid approaches combined prediction with mobility-aware placement \cite{li2020hybrid} or federated learning with task scheduling \cite{he2021intelligent}, but failed to integrate both prediction and adaptive replacement comprehensively.
+
+Recent hybrid FL-RL frameworks have emerged for intelligent caching. Wang et al. \cite{wang2024federated} proposed federated deep RL for collaborative caching with improved hit rates but high communication overhead. Kumar et al. \cite{kumar2024privacy} introduced privacy-preserving caching with differential privacy but lacked adaptive replacement. Chen et al. \cite{chen2024energy} optimized energy efficiency through federated Q-learning but struggled with large state spaces. Zhang et al. \cite{zhang2025intelligent} integrated FL prediction with DRL replacement, demonstrating hybrid potential but focusing on static scenarios. Ahmed et al. \cite{ahmed2025collaborative} extended this to autonomous vehicles with federated multi-agent RL, though requiring frequent communication. Liu et al. \cite{liu2025predictive} incorporated transfer learning for faster convergence but maintained static replacement strategies. Patel et al. \cite{patel2025dynamic} jointly optimized prediction and replacement but did not address energy efficiency. Wu et al. \cite{wu2025secure} ensured security through blockchain-enabled federated RL, though introducing computational overhead.
+
+Comprehensive surveys \cite{zhou2019edge} review edge intelligence techniques but do not specifically address FL-RL integration for caching. Nguyen et al. \cite{nguyen2021federated} demonstrated federated RL for resource allocation, while Zhang et al. \cite{zhang2022collaborative} proposed multi-agent RL for cooperative caching, both requiring high communication overhead without privacy-preserving collaborative prediction.
+
+Table \ref{table:comparison} compares existing approaches. Critical gaps remain in seamlessly integrating task similarity prediction with adaptive caching, achieving privacy-preserving collaborative learning with minimal overhead, enabling real-time adaptation to dynamic conditions, and comprehensively optimizing cache hit rate, completion time, and energy consumption simultaneously. Most works focus on either prediction (FL-based) or adaptation (RL-based), limiting effectiveness in dynamic vehicular fog environments requiring both proactive prediction and reactive adaptation.
+
+\begin{table*}[t!]
+\centering
+\caption{A detailed comparison of existing task result caching mechanisms in vehicular fog computing}
+\renewcommand{\arraystretch}{1.2}
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabularx}{\textwidth}{
+  >{\centering\arraybackslash\hsize=1.2\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X|
+  >{\centering\arraybackslash\hsize=0.85\hsize}X
+}
+\hline
+\rowcolor[gray]{0.9}
+\textbf{Research} & {Task Result Caching} & {Federated Learning} & {Reinforcement Learning} & {Privacy Preserving} & {Dynamic Adaptation} & {Hit Rate Opt.} & {Energy Efficiency} & {Task Similarity Prediction} & {Low Comm. Overhead} & {Success Rate Opt.} \\
+\hline
+Chen et al. \cite{chen2019deep} & \Checkmark & \XSolid & \XSolid & \XSolid & \XSolid & \Checkmark & \XSolid & \XSolid & \Checkmark & \XSolid\\
+\hline
+Liu et al. \cite{liu2020federated} & \Checkmark & \Checkmark & \XSolid & \Checkmark & \XSolid & \Checkmark & \XSolid & \XSolid & \XSolid & \XSolid\\
+\hline
+Sadeghi et al. \cite{sadeghi2019deep} & \XSolid & \XSolid & \Checkmark & \XSolid & \Checkmark & \Checkmark & \XSolid & \XSolid & \Checkmark & \XSolid\\
+\hline
+Wang et al. \cite{wang2020reinforcement}& \XSolid & \XSolid & \Checkmark & \XSolid & \Checkmark & \Checkmark & \XSolid & \XSolid & \XSolid & \XSolid\\
+\hline
+Xu et al. \cite{xu2018software} & \XSolid & \XSolid & \XSolid & \XSolid & \XSolid & \Checkmark & \Checkmark & \XSolid & \Checkmark & \XSolid\\
+\hline
+Zhang et al. \cite{zhang2019sdn}  & \XSolid & \XSolid & \XSolid & \XSolid & \XSolid & \Checkmark & \Checkmark & \XSolid & \Checkmark & \XSolid\\
+\hline
+Li et al. \cite{li2020hybrid} & \Checkmark & \XSolid & \XSolid & \XSolid & \XSolid & \Checkmark & \XSolid & \Checkmark & \Checkmark & \XSolid\\
+\hline
+He et al. \cite{he2021intelligent} & \XSolid & \Checkmark & \XSolid & \Checkmark & \XSolid & \XSolid & \XSolid & \XSolid & \XSolid & \XSolid\\
+\hline
+Nguyen et al. \cite{nguyen2021federated}& \XSolid & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \XSolid & \XSolid & \XSolid & \XSolid & \XSolid\\
+\hline
+Zhang et al. \cite{zhang2022collaborative}& \Checkmark & \XSolid & \Checkmark & \XSolid & \Checkmark & \Checkmark & \XSolid & \XSolid & \XSolid & \XSolid\\
+\hline
+Li et al. \cite{li2024adaptive} & \Checkmark & \XSolid & \Checkmark & \XSolid & \Checkmark & \Checkmark & \XSolid & \XSolid & \Checkmark & \XSolid\\
+\hline
+Wang et al. \cite{wang2024federated}& \Checkmark & \Checkmark & \Checkmark & \Checkmark & \XSolid & \Checkmark & \XSolid & \XSolid & \XSolid & \XSolid\\
+\hline
+Kumar et al. \cite{kumar2024privacy}& \Checkmark & \Checkmark & \XSolid & \Checkmark & \XSolid & \Checkmark & \XSolid & \XSolid & \Checkmark & \XSolid\\
+\hline
+Chen et al. \cite{chen2024energy}& \Checkmark & \Checkmark & \Checkmark & \Checkmark & \XSolid & \Checkmark & \Checkmark & \XSolid & \XSolid & \XSolid\\
+\hline
+Zhang et al. \cite{zhang2025intelligent}& \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \XSolid & \Checkmark & \XSolid & \XSolid\\
+\hline
+Ahmed et al. \cite{ahmed2025collaborative}& \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \XSolid & \XSolid & \XSolid & \XSolid\\
+\hline
+\rowcolor[gray]{0.9}
+\textbf{CoCa (Proposed)}  & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark & \Checkmark \\
+\hline
+\end{tabularx}
+\label{table:comparison}
+\end{table*}

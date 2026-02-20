@@ -19,6 +19,8 @@ class DistributedCacheManager:
     HOT_REPLICATION_INTERVAL = 100  # tasks
     HOT_TOP_K = 10
     ENABLE_AUTO_CACHE = True  # Global flag: if False, scheduler won't auto-cache
+    ENABLE_CACHE_LOOKUP = True  # Global flag: if False, scheduler won't lookup cache
+    ENABLE_FORWARDING = True    # Global flag: if False, only check local RSU cache
 
     """Manages distributed caches across multiple RSUs."""
     
@@ -51,8 +53,8 @@ class DistributedCacheManager:
             self.total_hits += 1
             return result
             
-        # If forwarding enabled, check neighboring RSUs
-        if enable_forwarding:
+        # If forwarding enabled (both per-call and global flag), check neighboring RSUs
+        if enable_forwarding and self.ENABLE_FORWARDING:
             for neighbor_rsu in self.rsu_ids:
                 if neighbor_rsu != rsu_id:
                     neighbor_result = self.rsu_caches[neighbor_rsu].lookup(key)

@@ -10,10 +10,10 @@ from typing import Tuple
 import random
 
 # Timing constants (in milliseconds) - matches scheduler parameters
-CACHE_ACCESS_BASE_TIME = 4.0      # Base cache lookup time (faster cache path)
+CACHE_ACCESS_BASE_TIME = 0.5      # Base cache lookup time (in-memory, very fast)
 RSU_TO_RSU_DELAY = 0.3            # Inter-RSU communication delay (reduced)
 VEHICLE_TO_RSU_DELAY = 1.0        # Vehicle to RSU access delay (matches delay_edge_rsu)
-COMPUTATION_BASE_TIME = 10.0      # Base computation time per task (realistic for VANET edge)
+COMPUTATION_BASE_TIME = 25.0      # Base computation time per task (realistic for VANET edge)
 NETWORK_JITTER_FACTOR = 0.05      # Lower variation to reduce random deadline misses
 ALPHA = 0.1                       # Task-size reduction ratio (matches scheduler)
 

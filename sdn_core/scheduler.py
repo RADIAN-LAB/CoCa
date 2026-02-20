@@ -12,8 +12,9 @@ from pulp import LpProblem, LpVariable, lpSum, LpMaximize, LpMinimize, LpBinary 
 
 from sdn_core.routing import calculate_num_hob
 from sdn_core.models.capacity import predict_capacity
-from sdn_core.timing import should_use_cache, calculate_cache_completion_time
+from sdn_core.timing import should_use_cache, calculate_cache_completion_time, estimate_computation_time
 from sdn_core.trajectory import predict_vehicle_destination_rsu
+from sdn_core.deadline_calculator import calculate_dynamic_deadline
 import random
 from cache import distributed_manager as dm_module  # Import module to get updated singleton
 from cache.manager import make_task_key
@@ -137,33 +138,33 @@ def task_scheduling(
         data_size = task_attrs.get('data_size', 0) if vehicle_attributes and node_id in vehicle_attributes else 0
         task_key = make_task_key(task_type, priority, data_size)
         
-        # Check distributed cache with trajectory-aware lookup
-        cached = dm_module.distributed_cache_manager.lookup(task_key, fog_rsu)
+        # Calculate dynamic deadline based on task type and priority
+        # If priority is 0 (no attributes), use default deadline
+        task_deadline = calculate_dynamic_deadline(task_type, priority) if priority > 0 else deadline
+        
+        # Check distributed cache with trajectory-aware lookup (skip if cache disabled)
+        if dm_module.distributed_cache_manager.ENABLE_CACHE_LOOKUP:
+            cached = dm_module.distributed_cache_manager.lookup(task_key, fog_rsu)
+        else:
+            cached = None
         
         # Skip trajectory-aware cache lookup since we disabled trajectory prediction
         
-        # Make deadline-aware decision
-        use_cache, timing_info = should_use_cache(task, cached, deadline)
+        # Make deadline-aware decision with dynamic deadline
+        use_cache, timing_info = should_use_cache(task, cached, task_deadline)
         timing_decisions.append((task, use_cache, timing_info))
         
         if use_cache and cached is not None:
-            # Check if this is a placeholder (time=-1) that needs computation
-            cached_success, cached_time = cached
-            if cached_time < 0:
-                # Placeholder from FL preplace - need to compute real result
-                # But this still counts as a cache hit (FL predicted correctly)
-                remaining_tasks.append(task)
-            else:
-                # Use cached result with actual timing
-                completion_time = timing_info["cache_time"]
-                success = 1 if completion_time <= deadline else 0
-                task_results[task] = (success, completion_time)
-                # Store result in cache for future use (only if auto-caching is enabled)
-                if dm_module.distributed_cache_manager.ENABLE_AUTO_CACHE:
-                    dm_module.distributed_cache_manager.store(task_key, (success, completion_time), fog_rsu, admission_threshold=1)
-                    # Proactively replicate to predicted destination RSU if different
-                    if final_rsu != fog_rsu:
-                        dm_module.distributed_cache_manager.store(task_key, (success, completion_time), final_rsu, admission_threshold=1, replicate=False)
+            # Use cached result with actual timing (fast cache path)
+            completion_time = timing_info["cache_time"]
+            success = 1 if completion_time <= task_deadline else 0
+            task_results[task] = (success, completion_time)
+            # Store result in cache for future use (only if auto-caching is enabled)
+            if dm_module.distributed_cache_manager.ENABLE_AUTO_CACHE:
+                dm_module.distributed_cache_manager.store(task_key, (success, completion_time), fog_rsu, admission_threshold=1)
+                # Proactively replicate to predicted destination RSU if different
+                if final_rsu != fog_rsu:
+                    dm_module.distributed_cache_manager.store(task_key, (success, completion_time), final_rsu, admission_threshold=1, replicate=False)
         else:
             # Need fresh computation
             remaining_tasks.append(task)
@@ -279,10 +280,12 @@ def task_scheduling(
                     success_count += 1
                     total_completion += t_tran_kj[(r, k, i, j, r2)]
 
-    # Calculate average for newly scheduled tasks
-    avg_completion = total_completion / success_count if success_count else 0.0
+    # Calculate average LP allocation time for newly scheduled tasks
+    avg_lp_completion = total_completion / success_count if success_count else 0.0
     
-    # Store individual task results in distributed cache
+    # Store individual task results in distributed cache with realistic computation overhead
+    computed_success = 0
+    computed_completion = 0.0
     for task in remaining_tasks:
         node_id, task_id, fog_rsu, final_rsu = task
         
@@ -297,17 +300,30 @@ def task_scheduling(
         data_size = task_attrs.get('data_size', 0) if vehicle_attributes and node_id in vehicle_attributes else 0
         task_key = make_task_key(task_type, priority, data_size)
         
+        # Calculate dynamic deadline for this task
+        task_deadline = calculate_dynamic_deadline(task_type, priority) if priority > 0 else deadline
+        
+        # Add realistic computation overhead from timing model
+        # Uncached tasks incur: LP allocation time + edge computation time
+        compute_overhead = estimate_computation_time(task, task_type, priority, data_size if data_size else 500)
+        task_completion = avg_lp_completion + compute_overhead
+        
+        # Determine success based on dynamic deadline
+        task_success = 1 if task_completion <= task_deadline else 0
+        computed_success += task_success
+        computed_completion += task_completion * task_success
+        
         # Store result in the RSU that processed the task (only if auto-caching is enabled)
         if dm_module.distributed_cache_manager.ENABLE_AUTO_CACHE:
-            result = (1 if success_count > 0 else 0, avg_completion)
+            result = (task_success, task_completion)
             dm_module.distributed_cache_manager.store(task_key, result, fog_rsu)
     
     # Combine cached and fresh computation results for final average
     cached_success = sum(success for success, _ in task_results.values())
     cached_completion = sum(comp * success for success, comp in task_results.values() if success)
     
-    total_success = success_count + cached_success
-    total_completion_time = total_completion + cached_completion
+    total_success = computed_success + cached_success
+    total_completion_time = computed_completion + cached_completion
     final_avg = total_completion_time / total_success if total_success else 0.0
     
     return total_success, final_avg

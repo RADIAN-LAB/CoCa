@@ -88,7 +88,7 @@ def main() -> None:
     # This ensures ALL auto-evictions (in store/preplace) use the chosen policy
     distributed_cache_manager = DistributedCacheManager(
         rsu_ids=[1, 2, 3, 4, 5],
-        cache_capacity=50,  # Large cache to ensure all 10 unique tasks stay cached (250 total)
+        cache_capacity=100,  # 500 total across 5 RSUs — pressure for 145 unique keys
         default_ttl=300,  # Long TTL to prevent expiration
         eviction_policy=cache_eviction_policy
     )
@@ -98,13 +98,24 @@ def main() -> None:
     # CRITICAL FIX: Disable auto-caching for FL+RL mode, enable for traditional policies
     # This allows FL+RL to have full control over what gets cached
     # Enable auto-cache for ALL modes - scheduler will update placeholders with real results
-    distributed_cache_manager.ENABLE_AUTO_CACHE = True
-    if args.evict_policy:
-        # Traditional policy mode: auto-caching enabled
-        print(f"Cache manager created: capacity=50/RSU (250 total), eviction_policy={cache_eviction_policy}, AUTO-CACHE=ON")
+    if args.evict_policy == "none":
+        # No-cache baseline: disable both lookup and store
+        distributed_cache_manager.ENABLE_AUTO_CACHE = False
+        distributed_cache_manager.ENABLE_CACHE_LOOKUP = False
+        distributed_cache_manager.ENABLE_FORWARDING = False
+        print(f"Cache manager created: capacity=100/RSU (500 total), NO-CACHE mode")
+    elif args.evict_policy:
+        # Traditional policy mode: local RSU cache only, no cross-RSU forwarding
+        distributed_cache_manager.ENABLE_AUTO_CACHE = True
+        distributed_cache_manager.ENABLE_CACHE_LOOKUP = True
+        distributed_cache_manager.ENABLE_FORWARDING = False
+        print(f"Cache manager created: capacity=100/RSU (500 total), eviction_policy={cache_eviction_policy}, LOCAL-ONLY")
     else:
-        # FL+RL mode: FL preplaces predictions, scheduler fills with real results
-        print(f"Cache manager created: capacity=50/RSU (250 total), FL+RL mode, AUTO-CACHE=ON (FL preplaces, scheduler updates)")
+        # FL+RL mode: FL preplaces across RSUs, cross-RSU forwarding enabled
+        distributed_cache_manager.ENABLE_AUTO_CACHE = True
+        distributed_cache_manager.ENABLE_CACHE_LOOKUP = True
+        distributed_cache_manager.ENABLE_FORWARDING = True
+        print(f"Cache manager created: capacity=100/RSU (500 total), FL+RL mode, FORWARDING=ON")
     
     # Per-RSU FL clients are now owned by the distributed cache manager
     rl_agent = None if args.evict_policy else RLAgent()
@@ -122,7 +133,17 @@ def main() -> None:
             break
         if ts % progress_interval == 0:
             print(f"[run_experiment] processing ts={ts} (cache_hits={prev_hits})")
-        # Phase A: advisor decides what to preplace based on observed popularity
+        # Phase A: FL pre-placement BEFORE scheduling (predict-then-serve)
+        # CoCa pre-places predictions from PREVIOUS observations so the cache
+        # is warm when the scheduler processes current tasks.
+        if not args.no_fl and not args.evict_policy:
+            # FL+RL mode: pre-place FL predictions across all RSUs
+            for rid in [1,2,3,4,5]:
+                top_predictions = distributed_cache_manager.fl_select_pool(rid)[:100]
+                for k in top_predictions:
+                    distributed_cache_manager.preplace(k, rid)
+
+        # Phase B: Build task keys for this timestep
         items_this_step = [
             (
                 make_task_key(
@@ -134,42 +155,6 @@ def main() -> None:
             )
             for row in tasks
         ]
-        # Dispatch task observations to the appropriate RSU-local FL client
-        items_by_rsu = {rid: [] for rid in [1,2,3,4,5]}
-        for k, row in items_this_step:
-            items_by_rsu[int(row['fog_rsu'])].append((k, row))
-        for rid, lst in items_by_rsu.items():
-            if lst:
-                distributed_cache_manager.fl_observe_tasks(rid, lst)
-
-        if not args.no_fl:
-            # Run local SGD + (periodic) FedAvg aggregation
-            distributed_cache_manager.fl_step(ts)
-
-            # CRITICAL: For FL+RL mode (auto-cache OFF), proactively cache FL predictions
-            # For traditional policies (auto-cache ON), just use preplace placeholders
-            if not args.evict_policy:
-                # FL+RL mode: Use preplace to cache predictions as placeholders
-                # Scheduler will compute real results and update cache
-                for rid in [1,2,3,4,5]:
-                    top_predictions = distributed_cache_manager.fl_select_pool(rid)[:50]  # Top 50 per RSU (fill entire cache, 250 total)
-                    for k in top_predictions:
-                        # Use preplace (stores None) - scheduler will compute and cache real results
-                        distributed_cache_manager.preplace(k, rid)
-            else:
-                # Traditional policy mode: Use lightweight preplace (placeholders only)
-                pool = []
-                for rid in [1,2,3,4,5]:
-                    pool.extend(distributed_cache_manager.fl_select_pool(rid))
-                
-                pool = list(set(pool))
-                max_preplace = distributed_cache_manager.cache_capacity // 2
-                pool = pool[:max_preplace]
-                
-                for k in pool:
-                    for rid in [1,2,3,4,5]:
-                        if k in distributed_cache_manager.fl_select_pool(rid)[:5]:
-                            distributed_cache_manager.preplace(k, rid)
 
 
         # Compute workload aggregates (used by RL and logging)
@@ -255,7 +240,7 @@ def main() -> None:
             0.5,    # delay_rsu_rsu
             0.1,    # delay_car_car
             4,      # task_size
-            8,      # deadline (set by user request)
+            5,      # deadline — tight to penalize cache misses
             True,   # enable_trajectory_prediction
             vehicle_attributes  # Pass task attributes for enhanced caching
         )
@@ -310,6 +295,17 @@ def main() -> None:
             fl_losses = [adv.last_loss or 0.0 for adv in distributed_cache_manager.fl_clients.values() if adv.last_loss is not None]
             mean_loss = sum(fl_losses)/len(fl_losses) if fl_losses else 0.0
             _f.write(f"{ts},{hits_after},{misses},{mean_loss:.4f}\n")
+
+        # Phase C: FL observation and training AFTER scheduling
+        # FL learns from current timestep so it can predict for the NEXT timestep
+        if not args.no_fl:
+            items_by_rsu = {rid: [] for rid in [1,2,3,4,5]}
+            for k, row in items_this_step:
+                items_by_rsu[int(row['fog_rsu'])].append((k, row))
+            for rid, lst in items_by_rsu.items():
+                if lst:
+                    distributed_cache_manager.fl_observe_tasks(rid, lst)
+            distributed_cache_manager.fl_step(ts)
 
         total_success += success
         total_tasks += len(tasks)

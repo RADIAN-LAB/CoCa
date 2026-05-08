@@ -228,19 +228,21 @@ def normalize(m):
         (1 - data[m]['energy'] / max_energy) * 100,
     ]
 
-plot_methods = ['CoCa (FL+RL)', 'FL-Only', 'LRU', 'Random', 'No Cache']
+plot_methods = ['No Cache', 'Random', 'FL-Only', 'CoCa (FL+RL)']
 plot_c = [COLORS[m] for m in plot_methods]
-plot_widths = [3.0, 2.0, 2.0, 1.5, 1.5]
-plot_markers = ['D', 's', 'o', '^', 'v']
+plot_widths = [2.0, 2.0, 2.5, 3.5]
+plot_markers = ['v', '^', 'D', 'D']
+plot_linestyles = ['-', '-', '-', '-']
+plot_alphas = [0.85, 0.85, 0.95, 1.0]
 
 angles = [n / float(N) * 2 * np.pi for n in range(N)]
 angles += angles[:1]
 
-for m, c, lw, mk in zip(plot_methods, plot_c, plot_widths, plot_markers):
+for m, c, lw, mk, ls, alpha in zip(plot_methods, plot_c, plot_widths, plot_markers, plot_linestyles, plot_alphas):
     vals = normalize(m)
     vals += vals[:1]
     ax.plot(angles, vals, marker=mk, linewidth=lw, color=c, label=m, markersize=7,
-            markeredgecolor='white', markeredgewidth=1)
+            markeredgecolor='white', markeredgewidth=1, linestyle=ls, alpha=alpha)
     if m == 'CoCa (FL+RL)':
         ax.fill(angles, vals, alpha=0.12, color=c)
 

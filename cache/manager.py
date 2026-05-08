@@ -143,7 +143,7 @@ class CacheManager:
         """Evict random entry."""
         if not self._store:
             return
-        import random, sys
+        import random
         k = random.choice(list(self._store.keys()))
         self._store.pop(k, None)
         self._freq.pop(k, None)
@@ -189,11 +189,6 @@ class CacheManager:
 
     def stats(self) -> Tuple[int, int]:
         """Return hit and miss counts."""
-        return self.hits, self.misses
-
-    # Stats helper
-    def stats(self) -> Tuple[int, int]:
-        """Return (hits, misses)."""
         return self.hits, self.misses
 
 

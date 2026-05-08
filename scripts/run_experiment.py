@@ -1,8 +1,8 @@
 """Replay a task trace and evaluate scheduler performance.
 
 Usage:
-    python3 scripts/run_experiment.py --trace experiments/synthetic/input/tasks.csv \
-        --output experiments/synthetic/output/summary.json
+    python3 scripts/run_experiment.py --trace experiments/sumo/input/sumo_tasks.csv \
+        --output experiments/sumo/output/summary.json
 
 Outputs summary JSON with:
     success_rate, avg_completion, cache_hits, cache_misses, total_runtime_s
@@ -13,24 +13,31 @@ import argparse
 import csv
 import json
 # Ensure project root in path BEFORE local imports
-import sys, os
+import os
+import sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from cache.fl_agent import FLAdvisor
+import random
+import numpy as np
+import torch
+
+# Seed all RNGs for reproducibility; varies across multi-seed runs
+_SEED = int(os.environ.get("TASK_GEN_SEED", "42"))
+random.seed(_SEED)
+np.random.seed(_SEED)
+torch.manual_seed(_SEED)
+
 from cache.rl_agent import RLAgent
 from cache.distributed_manager import DistributedCacheManager
 from cache import distributed_manager as dm_module  # Import module to update singleton
 from cache.manager import make_task_key
 import time
-from pathlib import Path
 from collections import defaultdict
-from typing import List, Tuple
+from typing import List
 
 # Ensure project root in path
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sdn_core.scheduler import task_scheduling
 

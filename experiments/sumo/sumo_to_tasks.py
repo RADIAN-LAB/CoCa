@@ -24,7 +24,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import defaultdict
 
-random.seed(42)
+_SEED = int(__import__("os").environ.get("TASK_GEN_SEED", "42"))
+random.seed(_SEED)
 
 # ---------------------------------------------------------------------------
 # RSU placement on the 5x5 grid network

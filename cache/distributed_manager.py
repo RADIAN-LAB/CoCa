@@ -4,10 +4,8 @@ Each RSU maintains its own cache with coordination through the FL and RL agents.
 """
 from __future__ import annotations
 
-import time
 import logging
 from typing import Dict, List, Any, Tuple, Optional
-from collections import defaultdict
 
 from .manager import CacheManager
 from .fl_agent import FLAdvisor
@@ -109,27 +107,6 @@ class DistributedCacheManager:
         """Pre-place placeholder in specified RSU cache."""
         self.rsu_caches[rsu_id].preplace(key, ttl)
     
-    def get_rsu_state(self, rsu_id: int):
-        """Return cache_usage (0-1) and hit_rate for an RSU."""
-        cache = self.rsu_caches[rsu_id]
-        usage = len(cache) / (getattr(cache, "_capacity", len(cache) or 1))
-        hits, misses = cache.stats()
-        hit_rate = hits / (hits + misses + 1e-9)
-        return {"cache_usage": usage, "hit_rate": hit_rate}
-
-    def get_aggregated_state(self):
-        """Aggregate usage and hit_rate across all RSUs."""
-        usages = []
-        hit_rates = []
-        for rid in self.rsu_ids:
-            st = self.get_rsu_state(rid)
-            usages.append(st["cache_usage"])
-            hit_rates.append(st["hit_rate"])
-        return {
-            "cache_usage": sum(usages) / len(usages),
-            "hit_rate": sum(hit_rates) / len(hit_rates),
-        }
-
     # ---------------------------------------------------------------------
     # Federated-learning helpers
     # ---------------------------------------------------------------------

@@ -29,6 +29,16 @@ random.seed(_SEED)
 np.random.seed(_SEED)
 torch.manual_seed(_SEED)
 
+import random
+import numpy as np
+import torch
+
+# Seed all RNGs for reproducibility; varies across multi-seed runs
+_SEED = int(os.environ.get("TASK_GEN_SEED", "42"))
+random.seed(_SEED)
+np.random.seed(_SEED)
+torch.manual_seed(_SEED)
+
 from cache.rl_agent import RLAgent
 from cache.distributed_manager import DistributedCacheManager
 from cache import distributed_manager as dm_module  # Import module to update singleton

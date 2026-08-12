@@ -1,92 +1,87 @@
+"""Per-task deadline lookup, in milliseconds.
+
+All deadline values now come from :mod:`sdn_core.task_taxonomy`, which carries a
+single authoritative task-type table and V2X-sourced latency budgets.
+
+Unit correction
+---------------
+The previous implementation documented its return value as **seconds** (range
+3-20) and derived it as ``base_deadline / priority`` from hand-picked bases of
+15/25/40. That value was then compared directly against completion times
+produced by :mod:`sdn_core.timing`, which are in **milliseconds**
+(``COMPUTATION_BASE_TIME = 25.0`` ms). Deadlines were therefore effectively 1000x
+tighter than documented, which made every cache hit succeed (~2 ms) and every
+fresh computation fail (~10-25 ms). That artefact — not the caching policy — was
+responsible for the extreme spread between the no-cache and cache-enabled
+success rates.
+
+Deadlines are milliseconds everywhere in this module. Prefer
+:func:`calculate_deadline_ms`; :func:`calculate_dynamic_deadline` is retained as
+an alias for existing call sites.
 """
-Dynamic deadline calculation for VANET tasks based on task type and priority.
+from __future__ import annotations
 
-Task types represent different application categories:
-- Type 0-2: Safety-critical (emergency braking, collision warnings)
-- Type 3-5: Traffic management (route planning, traffic updates)
-- Type 6-9: Infotainment (video streaming, map updates)
+from typing import Dict, Iterable, List
 
-Higher priority (5) = more urgent = shorter deadline
-Lower priority (1) = less urgent = longer deadline
-"""
+from sdn_core.task_taxonomy import DEADLINE_CLASSES, deadline_ms, spec_for
 
-def calculate_dynamic_deadline(task_type: int, priority: int) -> float:
-    """
-    Calculate dynamic deadline based on task type and priority.
-    
+
+def calculate_deadline_ms(task_type: int, priority: int) -> float:
+    """Hard deadline in milliseconds for a task type at a given priority.
+
     Args:
-        task_type: Task type (0-9)
-        priority: Priority level (1-5, where 5 is most urgent)
-        
+        task_type: Task type id (0-9); see ``sdn_core.task_taxonomy.TASK_TYPES``.
+        priority: 1 (low) to 3 (urgent). Values outside the range are clamped.
+
     Returns:
-        Deadline in seconds (range: 3-20 seconds)
+        Deadline in milliseconds.
     """
-    # Base deadlines for each task category (in seconds)
-    if task_type <= 2:
-        # Safety-critical: shortest base deadline
-        base_deadline = 15.0
-    elif task_type <= 5:
-        # Traffic management: medium base deadline
-        base_deadline = 25.0
-    else:
-        # Infotainment: longest base deadline
-        base_deadline = 40.0
-    
-    # Calculate deadline: higher priority = shorter deadline
-    # Priority 5 (urgent) gets base/5, Priority 1 (low) gets base/1
-    deadline = base_deadline / priority
-    
-    # Cap maximum deadline at 20 seconds
-    deadline = min(deadline, 20.0)
-    
-    # Ensure minimum deadline of 3 seconds
-    deadline = max(deadline, 3.0)
-    
-    return deadline
+    return deadline_ms(task_type, priority)
 
 
-def get_deadline_statistics(tasks_data):
-    """
-    Calculate statistics about deadlines for a set of tasks.
-    
+# Backwards-compatible alias. Note the unit change: this now returns
+# milliseconds, matching the completion times it is compared against.
+calculate_dynamic_deadline = calculate_deadline_ms
+
+
+def deadline_class_of(task_type: int) -> str:
+    """Latency class name ('safety', 'awareness', 'traffic', 'infotainment')."""
+    return spec_for(task_type).deadline_class
+
+
+def get_deadline_statistics(tasks_data: Iterable[Dict]) -> Dict[str, float]:
+    """Summarise the deadline distribution over a set of tasks.
+
     Args:
-        tasks_data: List of task dictionaries with 'task_type' and 'priority'
-        
+        tasks_data: Iterable of dicts carrying ``task_type`` and ``priority``.
+
     Returns:
-        Dictionary with deadline statistics
+        Dict with min, max, mean and median deadline in milliseconds.
     """
-    deadlines = [calculate_dynamic_deadline(t['task_type'], t['priority']) 
-                 for t in tasks_data]
-    
+    deadlines: List[float] = [
+        calculate_deadline_ms(int(t["task_type"]), int(t["priority"]))
+        for t in tasks_data
+    ]
+    if not deadlines:
+        return {"min_ms": 0.0, "max_ms": 0.0, "mean_ms": 0.0, "median_ms": 0.0}
+    ordered = sorted(deadlines)
     return {
-        'min': min(deadlines),
-        'max': max(deadlines),
-        'mean': sum(deadlines) / len(deadlines),
-        'median': sorted(deadlines)[len(deadlines) // 2]
+        "min_ms": ordered[0],
+        "max_ms": ordered[-1],
+        "mean_ms": sum(ordered) / len(ordered),
+        "median_ms": ordered[len(ordered) // 2],
     }
 
 
-# Example deadline table for reference
-DEADLINE_EXAMPLES = {
-    'Safety-Critical (Type 0-2)': {
-        'Priority 5 (Urgent)': 3.0,
-        'Priority 4 (High)': 3.75,
-        'Priority 3 (Medium)': 5.0,
-        'Priority 2 (Normal)': 7.5,
-        'Priority 1 (Low)': 15.0,
-    },
-    'Traffic Management (Type 3-5)': {
-        'Priority 5 (Urgent)': 5.0,
-        'Priority 4 (High)': 6.25,
-        'Priority 3 (Medium)': 8.33,
-        'Priority 2 (Normal)': 12.5,
-        'Priority 1 (Low)': 20.0,
-    },
-    'Infotainment (Type 6-9)': {
-        'Priority 5 (Urgent)': 8.0,
-        'Priority 4 (High)': 10.0,
-        'Priority 3 (Medium)': 13.33,
-        'Priority 2 (Normal)': 20.0,
-        'Priority 1 (Low)': 20.0,
-    }
-}
+def deadline_table_ms() -> Dict[str, Dict[int, float]]:
+    """The full class x priority deadline table, for inclusion in the paper."""
+    return {cls: dict(budgets) for cls, budgets in DEADLINE_CLASSES.items()}
+
+
+__all__ = [
+    "calculate_deadline_ms",
+    "calculate_dynamic_deadline",
+    "deadline_class_of",
+    "deadline_table_ms",
+    "get_deadline_statistics",
+]

@@ -29,8 +29,17 @@ class TrajectoryPredictor:
         self.model_loaded = False
         
         if model_path is None:
-            # Default path from original SDN implementation
-            model_path = "/Users/kosar/Documents/Ph.D code/windsurf/SDN/models/files/PredictTrajectory_model.pkl"
+            # Resolve relative to this repository. The previous default was an
+            # absolute path into a sibling checkout that does not exist here, so
+            # the predictor silently fell back to the mock on every run even
+            # though enable_trajectory_prediction was True, xgboost was
+            # installed, and the model file was present in-tree.
+            model_path = str(
+                Path(__file__).resolve().parent
+                / "models"
+                / "files"
+                / "PredictTrajectory_model.pkl"
+            )
         
         self.load_model(model_path)
     

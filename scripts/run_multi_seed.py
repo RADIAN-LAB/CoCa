@@ -14,6 +14,7 @@ Output:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import subprocess
 import sys
@@ -51,7 +52,9 @@ METHODS = {
     },
     "5_fl_only": {
         "name": "FL-Only",
-        "exp_args": ["--evict_policy", "lfu"],  # FL enabled + fixed LFU eviction
+        # --fl_placement is required: without it, --evict_policy suppresses FL
+        # pre-placement entirely and this baseline is byte-identical to LFU.
+        "exp_args": ["--evict_policy", "lfu", "--fl_placement"],
     },
     "6_fl_rl": {
         "name": "CoCa (FL+RL)",
@@ -83,8 +86,16 @@ def generate_trace(seed: int, output_csv: Path) -> bool:
     return True
 
 
-def run_single_experiment(trace_csv: Path, method_id: str, output_json: Path) -> bool:
-    """Run one method on one trace."""
+def run_single_experiment(trace_csv: Path, method_id: str, output_json: Path,
+                          seed: int) -> bool:
+    """Run one method on one trace.
+
+    The seed is forwarded as TASK_GEN_SEED so the experiment's own RNGs
+    (random / numpy / torch, and hence network jitter, RL exploration and FL
+    initialisation) vary across replications. Previously only trace generation
+    was seeded, leaving every replication with identical simulation randomness
+    and understating the variance in the reported confidence intervals.
+    """
     cfg = METHODS[method_id]
     cmd = [
         sys.executable,
@@ -93,10 +104,14 @@ def run_single_experiment(trace_csv: Path, method_id: str, output_json: Path) ->
         "--output", str(output_json),
     ] + cfg["exp_args"]
 
-    env = {**__import__("os").environ, "PYTHONPATH": str(ROOT)}
+    env = {
+        **__import__("os").environ,
+        "PYTHONPATH": str(ROOT),
+        "TASK_GEN_SEED": str(seed),
+    }
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
-        print(f"  [ERROR] {method_id} failed: {result.stderr[:200]}")
+        print(f"  [ERROR] {method_id} (seed {seed}) failed: {result.stderr[:300]}")
         return False
     return True
 
@@ -177,58 +192,98 @@ def main():
                         help=f"Number of seeds to run (default: {NUM_SEEDS})")
     parser.add_argument("--aggregate-only", action="store_true",
                         help="Skip running experiments, just aggregate existing results")
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="Run this many method-seed combinations concurrently "
+                             "(default: 1). Runs are independent subprocesses.")
+    parser.add_argument("--out-dir", type=Path, default=OUTPUT_BASE,
+                        help="Where seed_XX/ directories are written (default: "
+                             "experiments/multi_seed). Point sweeps and smoke "
+                             "tests elsewhere so canonical results survive.")
+    parser.add_argument("--force", action="store_true",
+                        help="Re-run combinations that already have a result file")
     args = parser.parse_args()
 
     seeds = list(range(1, args.seeds + 1))
-    OUTPUT_BASE.mkdir(parents=True, exist_ok=True)
+    out_base = args.out_dir
+    out_base.mkdir(parents=True, exist_ok=True)
+    failures: list[str] = []
 
     if not args.aggregate_only:
-        total_runs = len(seeds) * len(METHODS)
-        completed = 0
         t0 = time.time()
 
+        # Phase 1: every trace, in parallel. A method cannot start without one.
+        pending_traces = []
         for seed in seeds:
-            seed_dir = OUTPUT_BASE / f"seed_{seed:02d}"
+            seed_dir = out_base / f"seed_{seed:02d}"
             seed_dir.mkdir(parents=True, exist_ok=True)
-
             trace_csv = seed_dir / "tasks.csv"
-
-            # Step 1: Generate trace with this seed
-            print(f"\n{'='*60}")
-            print(f"SEED {seed}/{len(seeds)}")
-            print(f"{'='*60}")
-            
-            if not trace_csv.exists():
-                print(f"  Generating trace with seed={seed}...")
-                if not generate_trace(seed, trace_csv):
-                    print(f"  Skipping seed {seed}")
-                    continue
+            if args.force or not trace_csv.exists():
+                pending_traces.append((seed, trace_csv))
             else:
-                print(f"  Trace already exists: {trace_csv}")
+                print(f"[seed {seed:02d}] trace already present")
 
-            # Step 2: Run all methods
+        if pending_traces:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(args.jobs, 1)
+            ) as pool:
+                futures = {
+                    pool.submit(generate_trace, seed, path): seed
+                    for seed, path in pending_traces
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    seed = futures[future]
+                    if future.result():
+                        print(f"[seed {seed:02d}] trace generated")
+                    else:
+                        failures.append(f"seed {seed}: trace generation")
+
+        # Phase 2: every (seed, method) combination, in parallel.
+        work = []
+        for seed in seeds:
+            trace_csv = out_base / f"seed_{seed:02d}" / "tasks.csv"
+            if not trace_csv.exists():
+                continue
             for mid in METHODS:
-                out_json = seed_dir / f"{mid}_results.json"
-                if out_json.exists():
-                    print(f"  {mid}: already done, skipping")
-                    completed += 1
+                out_json = out_base / f"seed_{seed:02d}" / f"{mid}_results.json"
+                if out_json.exists() and not args.force:
+                    print(f"[seed {seed:02d}] {mid}: already done")
                     continue
+                work.append((seed, mid, trace_csv, out_json))
 
-                print(f"  Running {mid}...")
-                ok = run_single_experiment(trace_csv, mid, out_json)
-                completed += 1
-                elapsed = time.time() - t0
-                eta = elapsed / completed * (total_runs - completed) if completed > 0 else 0
-                print(f"  [{completed}/{total_runs}] elapsed={elapsed:.0f}s, ETA={eta:.0f}s")
+        completed = 0
+        if work:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(args.jobs, 1)
+            ) as pool:
+                futures = {
+                    pool.submit(run_single_experiment, trace, mid, out_json, seed):
+                        (seed, mid)
+                    for seed, mid, trace, out_json in work
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    seed, mid = futures[future]
+                    completed += 1
+                    ok = False
+                    try:
+                        ok = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"  [ERROR] seed {seed} {mid}: {exc}")
+                    if not ok:
+                        failures.append(f"seed {seed} {mid}")
+                    elapsed = time.time() - t0
+                    eta = elapsed / completed * (len(work) - completed)
+                    print(f"[{completed}/{len(work)}] seed {seed:02d} {mid}: "
+                          f"{'ok' if ok else 'FAILED'} "
+                          f"(elapsed={elapsed:.0f}s, ETA={eta:.0f}s)")
 
     # Step 3: Aggregate
     print(f"\n{'='*60}")
     print("AGGREGATING RESULTS")
     print(f"{'='*60}")
 
-    summary = aggregate_results(OUTPUT_BASE, seeds)
+    summary = aggregate_results(out_base, seeds)
 
-    agg_file = OUTPUT_BASE / "aggregated_results.json"
+    agg_file = out_base / "aggregated_results.json"
     with open(agg_file, "w") as f:
         json.dump(summary, f, indent=2, default=str)
     print(f"Aggregated results saved to: {agg_file}")
@@ -249,6 +304,13 @@ def main():
               f"{en['mean']:>10.1f} ± {en['std']:>7.1f}   "
               f"{sr['n']:>3d}")
 
+    if failures:
+        print(f"\n{len(failures)} run(s) failed:", file=sys.stderr)
+        for failure in failures:
+            print(f"  {failure}", file=sys.stderr)
+        # The table above covers only what completed; a partial run must not
+        # exit 0 and look clean.
+        return 1
     return 0
 
 

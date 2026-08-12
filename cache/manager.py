@@ -37,6 +37,41 @@ def make_task_key(*components: Any) -> str:
     data = "|".join(map(str, components)).encode()
     return hashlib.sha1(data).hexdigest()
 
+
+# ---------------------------------------------------------------------------
+# Pre-placement sentinel
+# ---------------------------------------------------------------------------
+
+class _Placeholder:
+    """Marker for cache space reserved by a predictive advisor.
+
+    ``preplace`` used to insert a fabricated *successful* result
+    ``(success=1, completion_time=3.0 ms)`` for a task that had never been
+    computed. Any subsequent lookup then scored as a cache hit on a result the
+    system had invented, which inflated hit rate and success rate for exactly
+    the FL-enabled configurations under evaluation.
+
+    A reservation now holds this sentinel instead. It occupies capacity and
+    remains subject to eviction, but :meth:`CacheManager.lookup` reports it as a
+    miss until a real computed result overwrites it.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "<PLACEHOLDER>"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+PLACEHOLDER = _Placeholder()
+
+
+def is_placeholder(value: Any) -> bool:
+    """True if a cached value is a reservation rather than a real result."""
+    return value is PLACEHOLDER
+
 # ---------------------------------------------------------------------------
 # CacheManager class
 # ---------------------------------------------------------------------------
@@ -54,13 +89,19 @@ class CacheManager:
         self._freq: Dict[str, int] = {}
         self.hits = 0
         self.misses = 0
+        # Reservations made by a proactive advisor (see ``preplace``).
+        self.preplacements = 0
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def lookup(self, key: str) -> Any | None:
-        """Return cached value if present and fresh, else None."""
+        """Return cached value if present, fresh and real, else None.
+
+        A reservation left by :meth:`preplace` is reported as a miss: the space
+        is held, but there is no computed result to serve yet.
+        """
         now = time.time()
         if key not in self._store:
             self.misses += 1
@@ -69,6 +110,12 @@ class CacheManager:
         if expiry < now:
             # expired – evict and miss
             del self._store[key]
+            return None
+        if is_placeholder(value):
+            # Reserved but not yet computed. Count the access so the reservation
+            # still looks popular to LFU, but serve nothing.
+            self.misses += 1
+            self._freq[key] = self._freq.get(key, 0) + 1
             return None
         # update stats
         self.hits += 1
@@ -157,17 +204,18 @@ class CacheManager:
         self._freq.pop(old_key, None)
 
     def preplace(self, key: str, ttl: int | None = None) -> None:
-        """Ensure *some* entry for key exists in cache.
+        """Reserve cache space for a key a proactive advisor expects to be hot.
 
-        Used by proactive advisors (FL/RL) to reserve space before result is
-        computed.  Stores an optimistic result (success=1, time=3.0ms) so the
-        scheduler uses the fast cache path instead of the LP solver.
+        Stores :data:`PLACEHOLDER`, not a result. The reservation consumes
+        capacity and competes for eviction like any other entry, but lookups
+        against it are misses until the scheduler stores a real result for the
+        same key. Reservations are counted in :attr:`preplacements` so their cost
+        can be charged by the energy model.
         """
         if key in self._store:
             return
-        # Store optimistic result: success=1, completion_time=3.0ms (cache-speed retrieval)
-        # This gives FL-predicted entries the fast cache path advantage
-        self.store(key, (1, 3.0), ttl)
+        self.preplacements += 1
+        self.store(key, PLACEHOLDER, ttl)
 
     # ------------------------------------------------------------------
     # Convenience helpers

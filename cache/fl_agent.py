@@ -31,6 +31,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from sdn_core.task_taxonomy import NUM_TASK_TYPES, type_onehot
+
 logger = logging.getLogger(__name__)
 
 torch.manual_seed(0)
@@ -52,12 +54,17 @@ class _MLP(nn.Module):
 class FLAdvisor:
     """Federated-learning adviser (single-process simulation).
 
-    Feature vector per key:
-        [norm_freq, norm_priority, norm_size_kb, one_hot(task_type 4)]  => 7 dims
+    Feature vector per key (8 scalars + task-type one-hot):
+        [norm_freq, log_freq, norm_priority, norm_size_kb, locality,
+         norm_speed, rsu_load, pop_decay] + one_hot(task_type)
+
+    The one-hot previously covered only 4 of the 10 task types, so types 4-9 were
+    encoded as an all-zero block and the advisor could not distinguish them.
     """
 
-    _TYPE_COUNT = 4
-    _FEAT_DIM = 12  # + speed, rsu_load, pop_decay
+    _TYPE_COUNT = NUM_TASK_TYPES
+    _SCALAR_FEATS = 8
+    _FEAT_DIM = _SCALAR_FEATS + NUM_TASK_TYPES
 
     def __init__(self, max_pool_size: int = 500, lr: float = 0.01, round_freq: int = 20):
         self.max_pool_size = max_pool_size
@@ -96,6 +103,14 @@ class FLAdvisor:
         """Record hit/miss outcome for supervised signal."""
         self._labels[key] = 1 if hit else 0
 
+    def attrs_for(self, key: str) -> Dict[str, Any]:
+        """Last-seen task attributes for a key.
+
+        Needed to speculatively compute a predicted-hot result: the cost of that
+        computation depends on the task's type, priority and payload size.
+        """
+        return dict(getattr(self, "_attrs", {}).get(key, {}))
+
     def _local_update(self):
         if not self._labels:
             return
@@ -114,7 +129,7 @@ class FLAdvisor:
             speed = float(row.get("veh_speed_kmh", 0.0)) / 120.0
             rsu_load = float(row.get("rsu_load", 0.0))
             decay = float(row.get("pop_decay", 0.0))
-            onehot = [1.0 if ttype == i else 0.0 for i in range(self._TYPE_COUNT)]
+            onehot = type_onehot(ttype)
             feat_batch.append([freq, log_freq, priority, size, locality, speed, rsu_load, decay] + onehot)
         xs = torch.tensor(feat_batch, dtype=torch.float32)
         ys_t = torch.tensor(ys, dtype=torch.float32).unsqueeze(1)
@@ -149,7 +164,7 @@ class FLAdvisor:
             speed = float(row.get("veh_speed_kmh", 0.0)) / 120.0
             rsu_load = float(row.get("rsu_load", 0.0))
             decay = float(row.get("pop_decay", 0.0))
-            onehot = [1.0 if ttype == i else 0.0 for i in range(self._TYPE_COUNT)]
+            onehot = type_onehot(ttype)
             feat_list.append([freq, log_freq, priority, size, locality, speed, rsu_load, decay] + onehot)
         xs = torch.tensor(feat_list, dtype=torch.float32)
         with torch.no_grad():

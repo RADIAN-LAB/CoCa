@@ -50,6 +50,7 @@ from typing import List
 # Ensure project root in path
 
 from sdn_core.scheduler import task_scheduling
+from sdn_core.provenance import provenance
 
 
 
@@ -81,6 +82,17 @@ def main() -> None:
     parser.add_argument("--load_rl", type=Path, default=None, help="Load pretrained RL agent from checkpoint")
     parser.add_argument("--no_fl", action="store_true", help="Disable FL pre-placement to compare pure policies")
     parser.add_argument("--save_rl", type=Path, default=None, help="Save RL agent after training")
+    parser.add_argument("--fl_placement", action="store_true",
+                        help="Enable FL pre-placement even when a fixed eviction policy is set. "
+                             "Without this, --evict_policy suppresses pre-placement, which made "
+                             "the 'FL-Only' baseline identical to plain LFU.")
+    parser.add_argument("--preplace_budget", type=int, default=10,
+                        help="Top-K predictions each RSU pre-places per timestep (default: 10). "
+                             "Must be well below cache capacity or placements evict real results.")
+    parser.add_argument("--preplace_mode", choices=["compute", "reserve"], default="compute",
+                        help="'compute': speculatively run the predicted task and cache a real "
+                             "result, paying its cost. 'reserve': hold capacity without computing "
+                             "(ablation showing what pre-placement is worth without the work).")
     args = parser.parse_args()
 
     trace = load_trace(args.trace)
@@ -90,7 +102,10 @@ def main() -> None:
     total_completion = 0.0
 
     start = time.time()
-    log_path = ROOT/"experiments"/"logs"/"fl_training.csv"
+    # Per-run FL log, derived from the output path. It used to be a single fixed
+    # file under experiments/logs/, so every run overwrote the previous one and
+    # concurrent runs interleaved their writes into the same file.
+    log_path = args.output.with_name(f"{args.output.stem}_fl_training.csv")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text("timestamp,cache_hits,cache_misses,fl_loss\n")
     # Determine eviction policy for the cache
@@ -142,6 +157,16 @@ def main() -> None:
         rl_agent.load(str(args.load_rl))
         print(f"Loaded pretrained RL agent from {args.load_rl}, epsilon={rl_agent.epsilon:.3f}")
     
+    # FL pre-placement runs when FL is on and either no fixed eviction policy is
+    # set (the FL+RL configuration) or it is explicitly requested (--fl_placement,
+    # used by the FL-Only baseline, which otherwise silently degenerated to LFU).
+    fl_placement_enabled = (
+        not args.no_fl and (not args.evict_policy or args.fl_placement)
+    )
+    print(f"FL pre-placement: {'ON' if fl_placement_enabled else 'OFF'}"
+          + (f" (mode={args.preplace_mode}, budget={args.preplace_budget}/RSU/step)"
+             if fl_placement_enabled else ""))
+
     prev_hits = 0
     prev_hit_rate = 0.0  # Track hit rate for delta calculation
     progress_interval = 100
@@ -153,12 +178,20 @@ def main() -> None:
         # Phase A: FL pre-placement BEFORE scheduling (predict-then-serve)
         # CoCa pre-places predictions from PREVIOUS observations so the cache
         # is warm when the scheduler processes current tasks.
-        if not args.no_fl and not args.evict_policy:
-            # FL+RL mode: pre-place FL predictions across all RSUs
-            for rid in [1,2,3,4,5]:
-                top_predictions = distributed_cache_manager.fl_select_pool(rid)[:100]
-                for k in top_predictions:
-                    distributed_cache_manager.preplace(k, rid)
+        if fl_placement_enabled:
+            # FL pre-placement: the RSU speculatively *computes* its top-ranked
+            # predictions so the cache holds real results when the scheduler
+            # runs. The budget matters: the advisor used to place up to 100
+            # entries per RSU per timestep into a 100-entry cache, which
+            # displaces every real result once placements stop being free.
+            for rid in [1, 2, 3, 4, 5]:
+                top_predictions = distributed_cache_manager.fl_select_pool(rid)
+                for k in top_predictions[:args.preplace_budget]:
+                    attrs = distributed_cache_manager.fl_attrs(rid, k)
+                    if args.preplace_mode == "compute":
+                        distributed_cache_manager.precompute(k, rid, attrs)
+                    else:  # "reserve" — ablation: capacity held, nothing computed
+                        distributed_cache_manager.preplace(k, rid)
 
         # Phase B: Build task keys for this timestep
         items_this_step = [
@@ -342,7 +375,33 @@ def main() -> None:
         "average_completion": total_completion / total_success if total_success else 0,
         "cache_hits": hits,
         "cache_misses": misses,
+        "hit_rate": hits / (hits + misses) if (hits + misses) else 0.0,
+        # Reservations made by the FL advisor. These hold no result, so they
+        # never count as hits; they are reported because they consume cache
+        # capacity and (in the energy model) proactive-placement cost.
+        "preplacements": distributed_cache_manager.total_preplacements,
+        **distributed_cache_manager.proactive_stats(),
         "runtime_seconds": runtime,
+        "provenance": provenance(
+            params={
+                "trace": str(args.trace),
+                "seed": _SEED,
+                "max_ts": args.max_ts,
+                "evict_policy": args.evict_policy,
+                "load_rl": str(args.load_rl) if args.load_rl else None,
+                "no_fl": args.no_fl,
+                "fl_placement_enabled": fl_placement_enabled,
+                "preplace_mode": args.preplace_mode,
+                "preplace_budget": args.preplace_budget,
+                "cache_capacity_per_rsu": distributed_cache_manager.cache_capacity,
+                "default_ttl": distributed_cache_manager.default_ttl,
+                "eviction_policy": cache_eviction_policy,
+                "rsu_ids": distributed_cache_manager.rsu_ids,
+                "enable_auto_cache": distributed_cache_manager.ENABLE_AUTO_CACHE,
+                "enable_cache_lookup": distributed_cache_manager.ENABLE_CACHE_LOOKUP,
+                "enable_forwarding": distributed_cache_manager.ENABLE_FORWARDING,
+            }
+        ),
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

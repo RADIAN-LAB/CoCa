@@ -1,7 +1,21 @@
-pulp>=2.7
-numpy>=1.21
-PyYAML>=6.0
-matplotlib>=3.5
-# future additions:
-torch>=2.0
-# websockets
+# Pinned to the versions the reported results were produced with, so the numbers
+# in the paper are reproducible. Loosen deliberately, not by accident.
+#
+# External tool (not pip-installable): SUMO, for mobility trace generation.
+#   macOS: brew install sumo    Linux: apt install sumo sumo-tools
+#   Record `sumo --version` alongside any published results.
+
+pulp==2.9.0
+numpy==2.0.2
+pandas==2.2.3
+PyYAML==6.0.2
+matplotlib==3.9.4
+scipy==1.13.1
+torch==2.7.1
+
+# Trajectory prediction (sdn_core/trajectory.py). Without it the predictor
+# silently falls back to a mock, so it is a hard requirement, not an extra.
+xgboost==2.1.2
+
+# Test suite
+pytest==8.4.2

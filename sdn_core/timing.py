@@ -5,9 +5,15 @@ This module provides functions to calculate various timing components:
 - Fresh computation time estimation
 - Network delivery delays
 - Deadline feasibility checks
+
+Units: every duration in this module is **milliseconds**. Deadlines supplied by
+:mod:`sdn_core.deadline_calculator` are milliseconds too; they previously were
+documented in seconds, which silently made them 1000x tighter than intended.
 """
 from typing import Tuple
 import random
+
+from sdn_core.task_taxonomy import compute_factor
 
 # Timing constants (in milliseconds) - matches scheduler parameters
 CACHE_ACCESS_BASE_TIME = 0.5      # Base cache lookup time (in-memory, very fast)
@@ -96,11 +102,12 @@ def estimate_computation_time(task: Tuple[int, int, int, int],
         Estimated computation time in milliseconds
     """
     node_id, task_id, fog_rsu, final_rsu = task
-    
-    # Base computation time varies by task type
-    type_multipliers = {0: 1.0, 1: 1.5, 2: 2.0, 3: 0.8}
-    type_factor = type_multipliers.get(task_type, 1.0)
-    
+
+    # Base computation time varies by task type. Sourced from the authoritative
+    # taxonomy so all 10 types are covered; the previous inline table only
+    # defined multipliers for types 0-3 and silently defaulted the rest to 1.0.
+    type_factor = compute_factor(task_type)
+
     # Priority affects resource allocation (higher priority = faster)
     priority_factor = 1.0 / (priority + 1)
     
@@ -116,6 +123,29 @@ def estimate_computation_time(task: Tuple[int, int, int, int],
     # Add processing jitter
     jitter = random.uniform(-NETWORK_JITTER_FACTOR, NETWORK_JITTER_FACTOR)
     return computation_time * (1 + jitter)
+
+def estimate_proactive_computation_ms(task_type: int = 0, priority: int = 1,
+                                      data_size_kb: int = 500,
+                                      rsu_id: int = 1) -> float:
+    """Cost of speculatively computing a result before it has been requested.
+
+    A predictive advisor that reserves cache space without producing a result
+    gains nothing: the reservation cannot be served, and it evicts real entries.
+    Modelling pre-placement therefore means modelling the *computation* it
+    triggers — the RSU runs the task early, pays the compute cost whether or not
+    the prediction turns out to be right, and holds a genuine result.
+
+    The task tuple is synthetic (origin and destination are the placing RSU)
+    because no vehicle has requested this work yet.
+
+    Returns:
+        Computation time in milliseconds.
+    """
+    synthetic_task = (0, 0, rsu_id, rsu_id)
+    return estimate_computation_time(
+        synthetic_task, task_type, priority, data_size_kb
+    )
+
 
 def should_use_cache(task: Tuple[int, int, int, int], cached_result: any,
                     deadline: float, task_attributes: dict = None) -> Tuple[bool, dict]:
@@ -271,8 +301,9 @@ def calculate_cache_completion_time(task: Tuple[int, int, int, int],
 
 __all__ = [
     "calculate_cache_access_time",
-    "calculate_delivery_time", 
+    "calculate_delivery_time",
     "estimate_computation_time",
+    "estimate_proactive_computation_ms",
     "calculate_cache_completion_time",
     "should_use_cache",
     "get_timing_statistics"

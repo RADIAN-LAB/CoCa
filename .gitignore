@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+.DS_Store
+
+# SUMO mobility realisations: large XML, regenerable with
+# scripts/build_mobility.py --seeds N (the seed fully determines the output).
+experiments/sumo/mobility/
+experiments/sumo/output/fcd_trace.xml
+
+# Generated task traces
+experiments/sumo/input/*.csv
+experiments/multi_seed/*/tasks.csv
+
+# Result JSONs and trained model checkpoints stay tracked: they are the paper's
+# evidence, and each result carries a provenance block.

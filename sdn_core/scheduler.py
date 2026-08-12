@@ -8,7 +8,11 @@ Refactored:
 """
 from typing import List, Tuple, Dict
 import random
-from pulp import LpProblem, LpVariable, lpSum, LpMaximize, LpMinimize, LpBinary  # type: ignore
+from pulp import LpProblem, LpVariable, lpSum, LpMaximize, LpMinimize, LpBinary, PULP_CBC_CMD  # type: ignore
+
+# CBC prints a solver report per LP. With ~500 timesteps x 2 LPs per step that
+# buries every other log line, so solve quietly.
+_QUIET_SOLVER = PULP_CBC_CMD(msg=False)
 
 from sdn_core.routing import calculate_num_hob
 from sdn_core.models.capacity import predict_capacity
@@ -210,7 +214,7 @@ def task_scheduling(
     for i, j, r2, _ in T:
         prob += lpSum(x[(i, j, r2, m)] for m in M) == 1
 
-    prob.solve()
+    prob.solve(_QUIET_SOLVER)
 
     # Extract chosen resource for each task
     r_ij_opt: Dict[Tuple[int, int, int], float] = {(i, j, r2): 0 for i, j, r2, _ in T}
@@ -268,7 +272,7 @@ def task_scheduling(
             <= t_max_ij[(i, j, r2)]
         )
 
-    prob2.solve()
+    prob2.solve(_QUIET_SOLVER)
 
     # Compute results
     success_count = 0

@@ -7,9 +7,10 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Any, Tuple, Optional
 
-from .manager import CacheManager
+from .manager import CacheManager, is_placeholder
 from .fl_agent import FLAdvisor
 from .fl_aggregator import FLAggregator
+from sdn_core.timing import estimate_proactive_computation_ms
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,15 @@ class DistributedCacheManager:
         self.total_hits = 0
         self.total_misses = 0
         self._ops = 0  # operation counter
+
+        # Speculative (FL-driven) computation accounting
+        self.proactive_computations = 0
+        self.proactive_compute_ms = 0.0
+        self.proactive_hits = 0
+        # Keys whose result was computed speculatively and not yet served. A key
+        # leaves the set on first hit, so proactive_hits counts distinct useful
+        # predictions rather than repeat accesses.
+        self._proactive_keys: set[str] = set()
         
         # Initialize FLAdvisor clients for each RSU
         self.fl_clients = {rid: FLAdvisor() for rid in rsu_ids}
@@ -49,8 +59,9 @@ class DistributedCacheManager:
         result = self.rsu_caches[rsu_id].lookup(key)
         if result is not None:
             self.total_hits += 1
+            self._credit_proactive(key)
             return result
-            
+
         # If forwarding enabled (both per-call and global flag), check neighboring RSUs
         if enable_forwarding and self.ENABLE_FORWARDING:
             for neighbor_rsu in self.rsu_ids:
@@ -60,11 +71,22 @@ class DistributedCacheManager:
                         # Found in neighbor - replicate to primary RSU
                         self.rsu_caches[rsu_id].store(key, neighbor_result)
                         self.total_hits += 1
+                        self._credit_proactive(key)
                         return neighbor_result
-        
+
         # Complete miss
         self.total_misses += 1
         return None
+
+    def _credit_proactive(self, key: str) -> None:
+        """Mark a speculatively computed result as having paid off.
+
+        Counted once per key: a prediction is useful or not, and repeat accesses
+        should not inflate the precision figure.
+        """
+        if key in self._proactive_keys:
+            self._proactive_keys.discard(key)
+            self.proactive_hits += 1
     
     def store(self, key: str, value: Any, rsu_id: int, ttl: Optional[int] = None,
               admission_threshold: int = 1, hot_threshold: int = 2, replicate: bool = True) -> None:
@@ -104,8 +126,73 @@ class DistributedCacheManager:
                         self.rsu_caches[nbr].store(key, value, None)
 
     def preplace(self, key: str, rsu_id: int, ttl: Optional[int] = None) -> None:
-        """Pre-place placeholder in specified RSU cache."""
+        """Reserve space for a predicted-hot key without computing anything.
+
+        Retained for the reservation-only ablation. The reservation holds no
+        result, so a lookup against it is a miss until the scheduler stores a
+        real one. See ``CacheManager.preplace``.
+        """
         self.rsu_caches[rsu_id].preplace(key, ttl)
+
+    def precompute(self, key: str, rsu_id: int, attrs: Dict[str, Any],
+                   ttl: Optional[int] = None) -> Optional[float]:
+        """Speculatively compute a predicted-hot result and cache it.
+
+        This is what pre-placement actually costs: the RSU runs the task before
+        anyone asks for it, pays the computation whether or not the prediction
+        was right, and stores a genuine result.
+
+        Returns:
+            Computation time in ms, or None if the key already held a real
+            result (nothing to recompute, nothing to charge).
+        """
+        cache = self.rsu_caches[rsu_id]
+        existing = cache._store.get(key)
+        if existing is not None and not is_placeholder(existing[1]):
+            return None
+
+        compute_ms = estimate_proactive_computation_ms(
+            task_type=int(attrs.get("task_type", 0)),
+            priority=int(attrs.get("priority", 1)),
+            data_size_kb=int(attrs.get("data_size_kB", attrs.get("data_size", 500))),
+            rsu_id=rsu_id,
+        )
+
+        # A speculatively computed result is indistinguishable from a reactively
+        # computed one once cached; only its cost and provenance differ.
+        cache.store(key, (1, compute_ms), ttl)
+
+        self.proactive_computations += 1
+        self.proactive_compute_ms += compute_ms
+        self._proactive_keys.add(key)
+        return compute_ms
+
+    @property
+    def total_preplacements(self) -> int:
+        """Reservations made across all RSUs, for energy accounting."""
+        return sum(cache.preplacements for cache in self.rsu_caches.values())
+
+    @property
+    def proactive_wasted(self) -> int:
+        """Speculative computations never served before eviction or run end.
+
+        This is the cost of FL mispredictions, and it is the number a reviewer
+        will ask for when a paper claims predictive placement helps.
+        """
+        return max(self.proactive_computations - self.proactive_hits, 0)
+
+    def proactive_stats(self) -> Dict[str, Any]:
+        """Summary of speculative computation, for the result JSON."""
+        computations = self.proactive_computations
+        return {
+            "proactive_computations": computations,
+            "proactive_hits": self.proactive_hits,
+            "proactive_wasted": self.proactive_wasted,
+            "proactive_precision": (
+                self.proactive_hits / computations if computations else 0.0
+            ),
+            "proactive_compute_ms": self.proactive_compute_ms,
+        }
     
     # ---------------------------------------------------------------------
     # Federated-learning helpers
@@ -116,6 +203,10 @@ class DistributedCacheManager:
 
     def fl_observe_cache_result(self, rsu_id: int, key: str, hit: bool):
         self.fl_clients[rsu_id].observe_cache_result(key, hit)
+
+    def fl_attrs(self, rsu_id: int, key: str) -> Dict[str, Any]:
+        """Task attributes the RSU-local advisor last saw for a key."""
+        return self.fl_clients[rsu_id].attrs_for(key)
 
     def fl_select_pool(self, rsu_id: int) -> List[str]:
         """Return keys to pre-place for a given RSU (after latest aggregation)."""

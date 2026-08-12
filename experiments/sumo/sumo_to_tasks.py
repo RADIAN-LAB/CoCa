@@ -20,77 +20,48 @@ import argparse
 import csv
 import math
 import random
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import defaultdict
 
+# This script is launched as a standalone subprocess (sometimes with PYTHONPATH
+# pointing at the sibling intent project), so put the CoCa root on sys.path
+# explicitly before importing from it.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from sdn_core import scenario  # noqa: E402
+from sdn_core.task_taxonomy import (  # noqa: E402
+    NUM_TASK_TYPES,
+    TASK_TYPES,
+    priority_weights,
+    size_buckets_kb,
+)
+
 _SEED = int(__import__("os").environ.get("TASK_GEN_SEED", "42"))
 random.seed(_SEED)
 
-# ---------------------------------------------------------------------------
-# RSU placement on the 5x5 grid network
-# Grid nodes are at (i*300, j*300) for i,j in [0..4]
-# We place 10 RSUs at strategic intersections for good coverage
-# ---------------------------------------------------------------------------
-RSU_POSITIONS = {
-    1:  (300, 300),    # SW intersection
-    2:  (900, 300),    # SE intersection
-    3:  (600, 600),    # Center intersection
-    4:  (300, 900),    # NW intersection
-    5:  (900, 900),    # NE intersection
-}
+# RSU placement and coverage come from sdn_core.scenario so that the
+# invalidation oracle assigns results to exactly the same cells this generator
+# does. See that module for the layout.
+RSU_POSITIONS = scenario.RSU_POSITIONS
+RSU_RANGE = scenario.RSU_RANGE_M
 
-RSU_RANGE = 500.0  # meters — coverage radius (larger to cover 5-RSU layout)
-
-# Task type definitions (simulate diverse VANET workloads)
-# 0: Navigation/routing, 1: Safety alert, 2: Media streaming,
-# 3: Sensor data processing, 4: Cooperative perception,
-# 5: Traffic info, 6: Parking search, 7: Emergency, 8: Infotainment, 9: V2X msg
-NUM_TASK_TYPES = 10
-
-# Discrete data size buckets per task type (kB)
-# Using fixed buckets (S/M/L) instead of continuous random values
-# so that cache keys are reusable across similar requests.
-TASK_SIZE_BUCKETS = {
-    0: [64, 128, 192, 256, 384],       # Navigation
-    1: [16, 32, 48, 64, 96],           # Safety alert (small, urgent)
-    2: [512, 768, 1024, 1280, 1536],   # Media streaming (large)
-    3: [128, 256, 384, 512, 768],      # Sensor data
-    4: [256, 384, 512, 768, 1024],     # Cooperative perception
-    5: [32, 64, 96, 128, 192],         # Traffic info
-    6: [32, 64, 96, 128, 192],         # Parking search
-    7: [16, 24, 32, 48, 64],           # Emergency (small, critical)
-    8: [512, 768, 1024, 1280, 1536],   # Infotainment
-    9: [64, 128, 192, 256, 384],       # V2X message
-}
-
-# Priority weights per task type (higher = more urgent)
-TASK_PRIORITY_WEIGHTS = {
-    0: [0.2, 0.5, 0.3],   # Navigation: mostly medium
-    1: [0.05, 0.15, 0.8],  # Safety: mostly high
-    2: [0.6, 0.3, 0.1],   # Media: mostly low
-    3: [0.3, 0.5, 0.2],   # Sensor: medium
-    4: [0.1, 0.3, 0.6],   # Cooperative: high
-    5: [0.4, 0.4, 0.2],   # Traffic: low-medium
-    6: [0.5, 0.4, 0.1],   # Parking: low
-    7: [0.0, 0.1, 0.9],   # Emergency: critical
-    8: [0.7, 0.2, 0.1],   # Infotainment: low
-    9: [0.2, 0.4, 0.4],   # V2X: medium-high
-}
+# Task type definitions, payload size buckets and priority weights all come from
+# sdn_core.task_taxonomy — the single authoritative table shared with the
+# scheduler, the deadline model, the FL feature builder and the intent
+# classifier. See TASK_TYPES there for the id -> name/intent mapping.
+#
+# Size buckets stay discrete (rather than continuous random draws) so that cache
+# keys remain reusable across similar requests.
 
 
 def distance(p1, p2):
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
 
-def nearest_rsu(x, y):
-    """Return the RSU ID closest to the given position."""
-    best_id, best_dist = 1, float("inf")
-    for rid, (rx, ry) in RSU_POSITIONS.items():
-        d = distance((x, y), (rx, ry))
-        if d < best_dist:
-            best_id, best_dist = rid, d
-    return best_id
+# Shared with the invalidation oracle: both must map a position to the same cell.
+nearest_rsu = scenario.nearest_rsu
 
 
 def assign_task_type(speed_ms, x, y, ts):
@@ -119,13 +90,12 @@ def assign_task_type(speed_ms, x, y, ts):
 
 def generate_priority(task_type):
     """Generate priority 1-3 based on task type distribution."""
-    weights = TASK_PRIORITY_WEIGHTS[task_type]
-    return random.choices([1, 2, 3], weights=weights)[0]
+    return random.choices([1, 2, 3], weights=list(priority_weights(task_type)))[0]
 
 
 def generate_data_size(task_type):
     """Generate data size in kB from discrete buckets for the task type."""
-    return random.choice(TASK_SIZE_BUCKETS[task_type])
+    return random.choice(list(size_buckets_kb(task_type)))
 
 
 def compute_pop_decay(ts, max_ts):
@@ -260,8 +230,7 @@ def main():
     type_counts = defaultdict(int)
     for r in rows:
         type_counts[r["task_type"]] += 1
-    type_names = ["Navigation", "Safety", "Media", "Sensor", "CoopPerception",
-                  "Traffic", "Parking", "Emergency", "Infotainment", "V2X"]
+    type_names = [spec.name for spec in TASK_TYPES]
     print(f"\n  Task type distribution:")
     for t in range(NUM_TASK_TYPES):
         pct = type_counts[t] / len(rows) * 100

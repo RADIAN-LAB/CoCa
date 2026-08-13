@@ -8,10 +8,16 @@ same RSU cell the trace generator used.
 """
 from __future__ import annotations
 
+import json
 import math
+import os
 from typing import Dict, Iterable, Tuple
 
-# RSU positions on the 5x5 grid network (1200 m x 1200 m).
+# Default scenario: the 5x5 grid network (1200 m x 1200 m). A different map is
+# selected by pointing SCENARIO_CONFIG at a JSON file with the same fields —
+# every consumer (trace generator, oracle, cache adapter) imports this module,
+# so one environment variable keeps them all on the same geometry. Everything
+# else about a scenario (the .net.xml, the FCD traces) lives beside that file.
 RSU_POSITIONS: Dict[int, Tuple[float, float]] = {
     1: (300.0, 300.0),    # SW intersection
     2: (900.0, 300.0),    # SE intersection
@@ -20,14 +26,26 @@ RSU_POSITIONS: Dict[int, Tuple[float, float]] = {
     5: (900.0, 900.0),    # NE intersection
 }
 
-RSU_IDS = sorted(RSU_POSITIONS)
-
 # Coverage radius in metres. Wide enough that the five RSUs cover the grid.
 RSU_RANGE_M = 500.0
 
-# Grid extent, used for occupancy-grid signatures.
+# Map extent, used for occupancy-grid signatures.
 GRID_MIN_M = 0.0
 GRID_MAX_M = 1200.0
+
+_CONFIG_PATH = os.environ.get("SCENARIO_CONFIG")
+if _CONFIG_PATH:
+    with open(_CONFIG_PATH) as _handle:
+        _config = json.load(_handle)
+    RSU_POSITIONS = {
+        int(rsu_id): (float(x), float(y))
+        for rsu_id, (x, y) in _config["rsu_positions"].items()
+    }
+    RSU_RANGE_M = float(_config.get("rsu_range_m", RSU_RANGE_M))
+    GRID_MIN_M = float(_config.get("grid_min_m", GRID_MIN_M))
+    GRID_MAX_M = float(_config.get("grid_max_m", GRID_MAX_M))
+
+RSU_IDS = sorted(RSU_POSITIONS)
 
 # Occupancy grid resolution for environment_perception signatures: a cell edge
 # of 100 m gives a 12x12 grid over the scenario.

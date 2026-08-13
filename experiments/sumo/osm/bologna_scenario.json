@@ -1,0 +1,14 @@
+{
+  "name": "bologna",
+  "comment": "Central Bologna OSM extract, netconvert boundary 1994 x 1504 m. Five RSUs mirror the grid scenario's quadrant-plus-centre layout so RSU ids stay 1-5 and every consumer works unchanged; range covers the larger extent.",
+  "rsu_positions": {
+    "1": [500.0, 400.0],
+    "2": [1500.0, 400.0],
+    "3": [1000.0, 750.0],
+    "4": [500.0, 1100.0],
+    "5": [1500.0, 1100.0]
+  },
+  "rsu_range_m": 650.0,
+  "grid_min_m": 0.0,
+  "grid_max_m": 2000.0
+}

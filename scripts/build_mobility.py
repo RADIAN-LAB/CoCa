@@ -87,9 +87,12 @@ def run(command: list[str], label: str) -> None:
 
 
 def build_seed(seed: int, out_dir: Path, num_vehicles: int, duration: int,
-               force: bool) -> tuple[int, str, float]:
+               force: bool, net_file: Path = NET_FILE) -> tuple[int, str, float]:
     """Produce one mobility realisation. Returns (seed, status, seconds)."""
     started = time.time()
+    # SUMO resolves the cfg's net-file relative to the cfg's own directory,
+    # so a relative --net-file would break inside each seed dir.
+    net_file = net_file.resolve()
     seed_dir = out_dir / f"seed_{seed:02d}"
     trips = seed_dir / "trips.xml"
     routes = seed_dir / "routes.rou.xml"
@@ -107,7 +110,7 @@ def build_seed(seed: int, out_dir: Path, num_vehicles: int, duration: int,
             "--seed", str(seed),
             "--num-vehicles", str(num_vehicles),
             "--duration", str(duration),
-            "--net-file", str(NET_FILE),
+            "--net-file", str(net_file),
             "--output", str(trips),
             "--quiet",
         ],
@@ -117,7 +120,7 @@ def build_seed(seed: int, out_dir: Path, num_vehicles: int, duration: int,
     run(
         [
             require_binary("duarouter"),
-            "-n", str(NET_FILE),
+            "-n", str(net_file),
             "-t", str(trips),
             "-o", str(routes),
             "--ignore-errors",
@@ -128,7 +131,7 @@ def build_seed(seed: int, out_dir: Path, num_vehicles: int, duration: int,
 
     cfg.write_text(
         SUMO_CFG_TEMPLATE.format(
-            net_file=NET_FILE,
+            net_file=net_file,
             route_file=routes.name,
             duration=duration,
             fcd_output=fcd.name,
@@ -172,6 +175,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration", type=int, default=500,
                         help="Simulation seconds (default: 500)")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--net-file", type=Path, default=NET_FILE,
+                        help="Road network to simulate on (default: the 5x5 "
+                             "grid). Pair a non-default net with its own "
+                             "--out-dir so realisations never mix.")
     parser.add_argument("--jobs", type=int, default=1,
                         help="Parallel SUMO runs (default: 1)")
     parser.add_argument("--force", action="store_true",
@@ -196,7 +203,7 @@ def main() -> int:
         futures = {
             pool.submit(
                 build_seed, seed, args.out_dir, args.num_vehicles,
-                args.duration, args.force,
+                args.duration, args.force, args.net_file,
             ): seed
             for seed in seeds
         }

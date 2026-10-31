@@ -107,7 +107,7 @@ This project implements an intelligent caching system for Software-Defined Netwo
 ## Project Structure
 
 ```
-sdn-vanet-optimizer/
+CoCa/
 ├── cache/                    # Cache management system
 │   ├── manager.py           # Core cache with LFU/LRU/TTL
 │   ├── fl_agent.py          # Federated learning advisor
@@ -239,10 +239,9 @@ MIT License - See LICENSE file for details
 ## Citation
 
 ```bibtex
-@misc{vanet-sdn-fl-rl-2024,
-  title={VANET SDN Scheduler with Federated Learning and Reinforcement Learning Caching},
-  author={[Your Name]},
-  year={2024},
-  url={https://github.com/[username]/sdn-vanet-optimizer}
+@misc{coca-simulator,
+  title={{CoCa}: {VANET} {SDN} Scheduler with Federated Learning and Reinforcement Learning Caching},
+  howpublished={\url{https://github.com/RADIAN-LAB/CoCa}},
+  year={2024}
 }
 ```
